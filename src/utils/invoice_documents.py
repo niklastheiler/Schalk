@@ -5,7 +5,7 @@ from facturx import generate_from_binary
 from src.controllers.db_controller import DBController, GoBDError
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.pdfa import add_output_intent
-from src.utils.einvoice_validation import validate_en16931
+from src.utils.einvoice_validation import validate_en16931, validate_xrechnung
 from src.utils.zugferd_generator import build_cii_xml, xrechnung_problems
 
 logger = logging.getLogger(__name__)
@@ -59,11 +59,16 @@ def build_invoice_pdf(db_controller: DBController, invoice) -> str:
 
 
 def export_xrechnung(db_controller: DBController, invoice, path: str):
-    """Writes the invoice as XRechnung 3.0 (CII). Raises GoBDError if mandatory data is missing."""
+    """Writes the invoice as XRechnung 3.0 (CII). Raises GoBDError if data is missing or a rule is violated."""
     if not db_controller.is_finalized(invoice):
         raise GoBDError("Nur festgeschriebene Rechnungen können als XRechnung exportiert werden.")
     problems = xrechnung_problems(db_controller, invoice)
     if problems:
         raise GoBDError("Für eine XRechnung fehlen Angaben:\n• " + "\n• ".join(problems))
+    xml = build_cii_xml(invoice, db_controller, "xrechnung")
+    # Same rules the recipient's portal applies (KoSIT): never hand out an XRechnung it would reject
+    problems = validate_xrechnung(xml)
+    if problems:
+        raise GoBDError("Die XRechnung verletzt Regeln des offiziellen Prüfregelwerks:\n• " + "\n• ".join(problems))
     with open(path, "wb") as f:
-        f.write(build_cii_xml(invoice, db_controller, "xrechnung"))
+        f.write(xml)

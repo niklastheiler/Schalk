@@ -24,6 +24,7 @@ pyinstaller --noconfirm --clean --windowed --name Schalk ^
     --collect-data reportlab ^
     --collect-data stdnum ^
     --collect-data qfluentwidgets ^
+    --add-data "src\resources;src\resources" ^
     run.py
 if errorlevel 1 (
     echo PyInstaller fehlgeschlagen ^(Exitcode %errorlevel%^)

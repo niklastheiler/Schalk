@@ -10,7 +10,7 @@ from drafthorse.models.document import Document
 from drafthorse.models.accounting import ApplicableTradeTax, CategoryTradeTax, TradeAllowanceCharge
 from drafthorse.models.party import TaxRegistration
 from drafthorse.models.payment import PaymentMeans, PaymentTerms
-from drafthorse.models.tradelines import LineItem
+from drafthorse.models.tradelines import AllowanceCharge, LineItem
 from src.utils.calculations import tax_breakdown, round_money
 from src.utils.tax import vat_category
 
@@ -123,6 +123,15 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
 
     # --- Delivery date (BT-72) ---
     doc.trade.delivery.event.occurrence = _date(invoice.delivery_date)
+    # Intra-community supply: the country the goods were delivered to is mandatory (BR-IC-12);
+    # the delivery address is the buyer's address
+    if any(vat_category(i.tax_percent, reason) == "K" for i in invoice.items):
+        ship_to = doc.trade.delivery.ship_to
+        ship_to.name = buyer.get("name")
+        ship_to.address.line_one = buyer.get("address")
+        ship_to.address.postcode = buyer.get("postal_code")
+        ship_to.address.city_name = buyer.get("city")
+        ship_to.address.country_id = country_code(buyer.get("country"))
 
     # --- Settlement ---
     settlement = doc.trade.settlement
@@ -143,6 +152,13 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         bic = (seller.get("bic") or "").replace(" ", "")
         if bic:
             means.payee_institution.bic = bic
+        settlement.payment_means.add(means)
+    elif is_storno:
+        # XRechnung requires payment instructions on every invoice (BR-DE-1); the amount of a
+        # cancellation is settled against the original invoice, not paid to the seller's account
+        means = PaymentMeans()
+        means.type_code = "1" # instrument not defined
+        means.information.add("Verrechnung mit der stornierten Rechnung bzw. Erstattung")
         settlement.payment_means.add(means)
 
     if not is_storno:
@@ -192,9 +208,10 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
     summation.line_total = _dec(sign * invoice.net_amount)
     summation.charge_total = Decimal("0.00")
     summation.allowance_total = _dec(credit)
-    summation.tax_basis_total = (_dec(sign * invoice.net_amount - credit), "EUR")
+    # Only the VAT total carries the currency, the other amounts must not (CII-DT-031)
+    summation.tax_basis_total = (_dec(sign * invoice.net_amount - credit), None)
     summation.tax_total = (_dec(sign * invoice.tax_amount), "EUR")
-    summation.grand_total = (_dec(sign * invoice.gross_amount), "EUR")
+    summation.grand_total = (_dec(sign * invoice.gross_amount), None)
     summation.due_amount = _dec(sign * invoice.gross_amount)
 
     # --- Items ---
@@ -205,10 +222,16 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         if item.description:
             line.product.description = item.description
 
-        unit_price = abs(item.unit_price)
-        net_price = unit_price * (100 - (item.discount_percent or 0.0)) / 100
-        line.agreement.gross.amount = Decimal(str(round(unit_price, 4)))
-        line.agreement.net.amount = Decimal(str(round(net_price, 4)))
+        unit_price = Decimal(str(round(abs(item.unit_price), 4)))
+        net_price = Decimal(str(round(float(unit_price) * (100 - (item.discount_percent or 0.0)) / 100, 4)))
+        line.agreement.gross.amount = unit_price
+        line.agreement.net.amount = net_price
+        if net_price != unit_price:
+            # The discount must be stated with the gross price: net price = gross price - allowance (PEPPOL-EN16931-R046)
+            discount = AllowanceCharge()
+            discount.indicator = False
+            discount.actual_amount = unit_price - net_price
+            line.agreement.gross.charge.add(discount)
 
         line.delivery.billed_quantity = (Decimal(str(item.quantity)), UNIT_CODES.get((item.unit or "").strip().lower(), "C62"))
 
