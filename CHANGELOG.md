@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1
+
+Schwerpunkt: nachweisbar gültige E-Rechnungen.
+
+**Installation/Update:** `Schalk-v1.1-windows-x64.zip` herunterladen, entpacken und den bisherigen Programmordner ersetzen. Die Daten liegen in `%LOCALAPPDATA%\Schalk` und bleiben erhalten.
+
+### Neu
+- **Offizielles XRechnung-Prüfregelwerk:** Vor jedem XRechnung-Export laufen dieselben Regeln wie im KoSIT-Validator der Behörden-Eingangsportale (CEN EN 16931 1.3.16 und XRechnung 3.0.2). Eine XRechnung, die abgelehnt würde, wird nicht mehr ausgegeben.
+- **Beispielrechnungen** für alle Steuerfälle unter `samples/e-rechnungen` zum Prüfen mit externen Validatoren (KoSIT, Mustang, veraPDF).
+- **Automatische Prüfung bei jeder Änderung:** Alle Steuerfälle werden mit dem unabhängigen Mustang-Validator geprüft, einschließlich PDF/A-3 per veraPDF.
+
+### Behoben
+- Innergemeinschaftliche Lieferungen ließen sich nicht festschreiben, weil das Lieferland fehlte (BR-IC-12).
+- XRechnung mit Positionsrabatt: Der Abschlag fehlte beim Bruttopreis (PEPPOL-EN16931-R046).
+- XRechnung: unzulässige Währungsangabe an Netto- und Bruttosumme (CII-DT-031).
+- Stornorechnung als XRechnung ohne Zahlungsangaben (BR-DE-1).
+
+### Geändert
+- Der GiroCode (QR-Code) wird nicht mehr auf die Rechnung gedruckt.
+
 ## 1.0
 
 Erste finale Version von Schalk, dem Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter Windows 10/11.
