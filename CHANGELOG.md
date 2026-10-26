@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- Eigenes Programm-Logo in Rot, Schwarz und Weiß für EXE, Setup, Verknüpfungen und Programmfenster
+
 ## 1.2.1
 
 - Fehlerbehebung: Schalk 1.2 startete nach der Installation nicht (fehlende Währungstabelle iso4217 in der EXE)
