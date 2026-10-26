@@ -49,6 +49,10 @@ jobs:
           foreach ($rules in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt") {
             if (-not (Test-Path "dist/Schalk/_internal/src/resources/$rules")) { throw "Prüfregeln fehlen in der EXE: $rules" }
           }
+          # Data files of libraries that are read at runtime (a missing one crashes Schalk on start)
+          foreach ($data in "iso4217/table.xml") {
+            if (-not (Test-Path "dist/Schalk/_internal/$data")) { throw "Datei fehlt in der EXE: $data" }
+          }
           Copy-Item LICENSE dist/Schalk/LICENSE.txt
           # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
           $version = $env:TAG.TrimStart("v")

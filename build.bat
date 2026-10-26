@@ -21,6 +21,7 @@ if %errorlevel% neq 0 (
 pyinstaller --noconfirm --clean --windowed --name Schalk ^
     --collect-all saxonche ^
     --collect-data facturx ^
+    --collect-data iso4217 ^
     --collect-data drafthorse ^
     --collect-data reportlab ^
     --collect-data stdnum ^
