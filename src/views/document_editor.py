@@ -5,7 +5,7 @@ from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QAbstractItemView, QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
 from qfluentwidgets import (BodyLabel, ComboBox, EditableComboBox, LineEdit, PrimaryPushButton, PushButton,
                             SearchLineEdit, SubtitleLabel, TableWidget)
-from src.controllers.db_controller import DBController, GoBDError
+from src.controllers.db_controller import DBController, GoBDError, NO_ITEMS_MESSAGE
 from src.utils.calculations import calculate_totals, item_total
 from src.utils.signal_bus import SignalBus
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
@@ -339,13 +339,16 @@ class DocumentEditor(QWidget):
         zero = has_zero_rate(items) or any(self.table.cellWidget(r, COL_TAX).currentData() == 0.0 for r in range(self.table.rowCount()))
         self.exemptionLabel.setVisible(zero)
         self.exemptionEdit.setVisible(zero)
+        # A document without items cannot be saved
+        self.saveBtn.setEnabled(bool(items))
+        self.saveBtn.setToolTip("" if items else NO_ITEMS_MESSAGE)
 
     # --- Saving ---
     def validate(self, items: list) -> Optional[str]:
         if not self.companyEdit.text().strip() and not self.nameEdit.text().strip():
             return "Bitte geben Sie entweder eine Firma oder den Vor- und Nachnamen an."
         if not items:
-            return "Bitte mindestens eine Position mit Bezeichnung erfassen."
+            return NO_ITEMS_MESSAGE
         if has_zero_rate(items) and not self.exemptionEdit.text().strip():
             return EXEMPTION_REQUIRED_MESSAGE
         return None
