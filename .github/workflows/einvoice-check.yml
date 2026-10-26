@@ -1,0 +1,79 @@
+# Runs the tests and checks the e-invoices of every tax case with the independent Mustang validator
+# (ZUGFeRD XML and profile, PDF/A-3 via veraPDF, XRechnung). Runs on every pull request and push to main.
+name: E-Rechnung prüfen
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  MUSTANG_VERSION: "2.26.0"
+  MUSTANG_SHA1: "8755fc333032f802ad7dcf3930201edfe64014e2"
+
+jobs:
+  check:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    # Python steps run in cmd like build.bat: PowerShell on GitHub stops on any stderr output
+    # (e.g. Qt messages at exit) and would fail the step although the command succeeded
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Tests
+        run: python -m pytest -q tests
+
+      - name: Beispielrechnungen erzeugen
+        run: python tools/create_sample_invoices.py check
+
+      - name: Mustang-Validator laden
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://repo1.maven.org/maven2/org/mustangproject/Mustang-CLI/$env:MUSTANG_VERSION/Mustang-CLI-$env:MUSTANG_VERSION.jar"
+          Invoke-WebRequest $url -OutFile mustang.jar
+          $hash = (Get-FileHash mustang.jar -Algorithm SHA1).Hash.ToLower()
+          if ($hash -ne $env:MUSTANG_SHA1) { throw "Prüfsumme des Mustang-Validators stimmt nicht: $hash" }
+
+      - name: Rechnungen validieren
+        shell: pwsh
+        run: |
+          # Java writes log lines to stderr; only the report decides
+          $ErrorActionPreference = "Continue"
+          $failed = @()
+          foreach ($file in Get-ChildItem check -File | Where-Object { $_.Extension -in ".pdf", ".xml" }) {
+            $report = java -jar mustang.jar --action validate --no-notices --source $file.FullName 2>&1 | Out-String
+            Set-Content "check/$($file.BaseName).report.xml" $report -Encoding utf8
+            if ($report -match '<summary status="valid"') {
+              Write-Host "OK      $($file.Name)"
+            } else {
+              Write-Host "FEHLER  $($file.Name)"
+              Write-Host $report
+              $failed += $file.Name
+            }
+          }
+          if ($failed) { throw "Nicht gültig: $($failed -join ', ')" }
+
+      - name: Rechnungen und Prüfberichte bereitstellen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-rechnungen-pruefung
+          path: check/

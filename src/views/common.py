@@ -286,10 +286,10 @@ class ChoiceDelegate(TableItemDelegate):
             value = combo.itemText(position)
             self.closeEditor.emit(combo, QStyledItemDelegate.NoHint)
             # Applied after the editor is gone: the change refreshes (and resets) the table
-            QTimer.singleShot(0, lambda: self.column.on_choice(record, value))
+            QTimer.singleShot(0, self, lambda: self.column.on_choice(record, value))
         combo.currentIndexChanged.connect(chosen)
         self._editing = QPersistentModelIndex(index)
-        QTimer.singleShot(0, combo._showComboMenu)
+        QTimer.singleShot(0, combo, combo._showComboMenu)
         return combo
 
     def updateEditorGeometry(self, editor, option, index):
@@ -506,7 +506,8 @@ class ListPage(QWidget):
         if self.isVisible() and not self._refresh_scheduled:
             # Coalesce bursts of change signals into one refresh
             self._refresh_scheduled = True
-            QTimer.singleShot(0, self.refresh)
+            # Bound to self: a page deleted in the meantime is not refreshed anymore
+            QTimer.singleShot(0, self, self.refresh)
 
     def showEvent(self, event):
         super().showEvent(event)
