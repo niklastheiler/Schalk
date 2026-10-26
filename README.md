@@ -30,7 +30,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 ## Neue Version veröffentlichen
 
 1. In `src/version.py` die `APP_VERSION` erhöhen und in `CHANGELOG.md` einen Abschnitt `## <Version>` anlegen.
-2. Nach dem Merge auf `main` einen Tag setzen und pushen, z. B. `git tag v1.1` und `git push origin v1.1`.
+2. Nach dem Merge auf `main` unter GitHub → Actions → Release → „Run workflow“ starten (oder einen Tag pushen, z. B. `git tag v1.1` und `git push origin v1.1`).
 3. Der Workflow `.github/workflows/release.yml` baut die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
 
 ## Datenablage und Sicherheit
