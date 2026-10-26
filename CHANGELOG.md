@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Fehlerbehebung: Schalk 1.2 startete nach der Installation nicht (fehlende Währungstabelle iso4217 in der EXE)
+
 ## 1.2
 
 - Installation per Setup nach C:\Programme\Schalk mit Startmenü-/Desktop-Verknüpfung und Deinstallation über „Apps & Features“; die portable ZIP entfällt
