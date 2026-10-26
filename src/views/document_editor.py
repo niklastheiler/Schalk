@@ -85,6 +85,8 @@ class DocumentEditor(QWidget):
         self.customerSearch.setCompleter(self._completer)
         self.customerSearch.textEdited.connect(self._on_customer_search_edited)
         customerForm.addRow("Kunde", self.customerSearch)
+        self.customerHint = BodyLabel("")
+        customerForm.addRow("", self.customerHint)
 
         self.companyEdit = self._line_edit("Firma", customerForm)
         self.nameEdit = self._line_edit("Vor- und Nachname", customerForm)
@@ -93,6 +95,8 @@ class DocumentEditor(QWidget):
         self.cityEdit = self._line_edit("Ort", customerForm)
         self.emailEdit = self._line_edit("E-Mail (für E-Rechnung)", customerForm)
         self.vatIdEdit = self._line_edit("USt-IdNr. des Kunden (optional)", customerForm)
+        for edit in (self.companyEdit, self.nameEdit):
+            edit.textChanged.connect(self._update_customer_hint)
 
         self.documentForm = QFormLayout()
         self.documentForm.setSpacing(10)
@@ -179,9 +183,29 @@ class DocumentEditor(QWidget):
             self._fill_customer(customer)
 
     def _on_customer_search_edited(self, text: str):
-        if not text:
-            # Empty search = new customer
-            self.customer_id = None
+        # Typing (instead of picking a suggestion) means no existing customer is selected
+        self.customer_id = None
+        self._update_customer_hint()
+
+    def _selected_customer(self):
+        """The chosen existing customer, as long as its name was not overwritten in the form."""
+        customer = self.db_controller.get_customer(self.customer_id) if self.customer_id else None
+        if not customer:
+            return None
+        person = f"{customer.first_name or ''} {customer.last_name or ''}".strip()
+        if self.companyEdit.text().strip() != (customer.company_name or "") or self.nameEdit.text().strip() != person:
+            return None # a different name is a different customer, never a rename
+        return customer
+
+    def _update_customer_hint(self):
+        if self._read_only:
+            self.customerHint.setText("")
+            return
+        customer = self._selected_customer()
+        if customer:
+            self.customerHint.setText(f"Bestehender Kunde: {customer.display_name} – Adressänderungen werden übernommen")
+        else:
+            self.customerHint.setText("Neuer Kunde wird beim Speichern angelegt")
 
     def _fill_customer(self, customer):
         self.customer_id = customer.id
@@ -193,6 +217,7 @@ class DocumentEditor(QWidget):
         self.cityEdit.setText(customer.city or "")
         self.emailEdit.setText(customer.email or "")
         self.vatIdEdit.setText(customer.vat_id or "")
+        self._update_customer_hint()
 
     def _save_customer(self) -> int:
         names = self.nameEdit.text().strip().split(" ", 1)
@@ -206,8 +231,9 @@ class DocumentEditor(QWidget):
             email=self.emailEdit.text().strip(),
             vat_id=self.vatIdEdit.text().strip(),
         )
-        if self.customer_id and self.db_controller.get_customer(self.customer_id):
-            self.db_controller.update_customer(self.customer_id, **fields)
+        customer = self._selected_customer()
+        if customer:
+            self.db_controller.update_customer(customer.id, **fields)
         else:
             self.customer_id = self.db_controller.add_customer(**fields)
         return self.customer_id
@@ -238,6 +264,7 @@ class DocumentEditor(QWidget):
 
     def set_read_only(self, read_only: bool):
         self._read_only = read_only
+        self._update_customer_hint()
         self.saveBtn.setVisible(not read_only)
         self.addItemBtn.setVisible(not read_only)
         for edit in (self.customerSearch, self.companyEdit, self.nameEdit, self.addressEdit, self.postalCodeEdit,
