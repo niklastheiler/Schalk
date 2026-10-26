@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- Sicherheitsupdate: cryptography 50.0.2
+- PySide6 6.12, SQLAlchemy 2.1, reportlab 5.1 und weitere aktualisierte Abhängigkeiten
+- Build mit PyInstaller 6.22 und aktuellen GitHub-Actions
+
 ## 1.1
 
 Schwerpunkt: nachweisbar gültige E-Rechnungen.
