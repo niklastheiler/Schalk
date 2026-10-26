@@ -4,11 +4,13 @@ Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 10/1
 
 ## Installation
 
-Unter [Releases](https://github.com/niklastheiler/Schalk/releases) die aktuelle `Schalk-vX.Y-windows-x64.zip` herunterladen, entpacken und `Schalk\Schalk.exe` starten. Eine Python-Installation ist nicht nötig. Was sich zwischen den Versionen geändert hat, steht im [Changelog](CHANGELOG.md).
+Unter [Releases](https://github.com/niklastheiler/Schalk/releases) das aktuelle `Schalk-Setup-vX.Y.exe` herunterladen und ausführen. Es installiert Schalk nach `C:\Programme\Schalk` (Administratorrechte nötig), legt eine Verknüpfung im Startmenü und auf Wunsch auf dem Desktop an und lässt sich unter „Apps & Features“ wieder deinstallieren. Eine Python-Installation ist nicht nötig. Was sich zwischen den Versionen geändert hat, steht im [Changelog](CHANGELOG.md).
+
+Die Daten liegen getrennt vom Programm in `%LOCALAPPDATA%\Schalk`. Installation, Updates und Deinstallation lassen sie unberührt.
 
 ### Automatische Updates
 
-Ab Version 1.2 prüft Schalk bei jedem Start im Hintergrund, ob es auf GitHub ein neueres Release gibt. Ist eines da, erscheint ein kurzer Hinweis, und das Update wird im Hintergrund heruntergeladen und per SHA-256 geprüft. Danach fragt Schalk, ob es jetzt neu starten soll. Beim Neustart (oder sonst beim nächsten Schließen) werden die Programmdateien ersetzt. Die Daten in `%LOCALAPPDATA%\Schalk` bleiben unberührt. Voraussetzung: Der Programmordner ist beschreibbar, also z. B. nicht unter `C:\Programme`. Sonst weist Schalk nur auf das neue Release hin. Beim Start aus dem Quellcode wird nichts aktualisiert.
+Ab Version 1.2 prüft Schalk bei jedem Start im Hintergrund, ob es auf GitHub ein neueres Release gibt. Ist eines da, erscheint ein kurzer Hinweis, und das neue Setup wird im Hintergrund heruntergeladen und per SHA-256 geprüft. Danach fragt Schalk, ob es jetzt neu starten soll. Beim Neustart (oder sonst beim nächsten Schließen) läuft das Setup still, Windows fragt dabei einmal nach der Berechtigung, und die neue Version startet. Lehnt man die Abfrage ab, bleibt alles unverändert und das Update wird beim nächsten Start erneut angeboten. Beim Start aus dem Quellcode wird nichts aktualisiert.
 
 ## Start aus dem Quellcode
 
@@ -29,7 +31,7 @@ python run.py
 build.bat
 ```
 
-Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `dist\Schalk\Schalk.exe`. Diesen Ordner kann man auf andere Rechner kopieren.
+Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `dist\Schalk\Schalk.exe`. Das Setup baut der Release-Workflow daraus mit Inno Setup (`installer/schalk.iss`).
 
 ## Neue Version veröffentlichen
 
@@ -39,7 +41,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
    ```
    Das setzt `APP_VERSION` in `src/version.py` und legt den Abschnitt in `CHANGELOG.md` an (jeder Text wird ein Eintrag). Die neue Version muss größer sein als die aktuelle.
 2. Nach dem Merge auf `main` unter GitHub → Actions → Release → „Run workflow“ starten (oder einen Tag pushen, z. B. `git tag v1.1` und `git push origin v1.1`).
-3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
+3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests), baut daraus das Setup, testet es mit einer stillen Installation und Deinstallation und veröffentlicht das Release mit Setup und Changelog-Abschnitt.
 
 ## Datenablage und Sicherheit
 

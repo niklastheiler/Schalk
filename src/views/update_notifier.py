@@ -6,8 +6,6 @@ from src.utils import updater
 
 logger = logging.getLogger(__name__)
 
-RELEASES_URL = f"https://github.com/{updater.REPOSITORY}/releases/latest"
-
 
 class UpdateNotifier(QObject):
     """
@@ -17,7 +15,6 @@ class UpdateNotifier(QObject):
 
     found = Signal(object) # Release
     ready = Signal(str) # version
-    failed = Signal(str)
 
     def __init__(self, window):
         super().__init__(window)
@@ -26,11 +23,14 @@ class UpdateNotifier(QObject):
         self.restart = False
         self.found.connect(self._on_found)
         self.ready.connect(self._on_ready)
-        self.failed.connect(self._on_failed)
 
     def start(self):
-        if not updater.is_installed_build():
+        if not updater.is_installed():
             return
+        try:
+            updater.remove_installed_updates()
+        except OSError:
+            logger.exception("Alte Updates konnten nicht gelöscht werden")
         staged = updater.staged_version()
         if staged:
             self.ready.emit(staged)
@@ -41,10 +41,6 @@ class UpdateNotifier(QObject):
         try:
             release = updater.find_update()
             if release is None:
-                return
-            if not updater.can_write_install_dir():
-                self.failed.emit(f"Version {release.version} ist verfügbar, kann aber nicht automatisch installiert werden, "
-                                 f"weil der Programmordner schreibgeschützt ist. Download: {RELEASES_URL}")
                 return
             self.found.emit(release)
             updater.download(release)
@@ -58,15 +54,11 @@ class UpdateNotifier(QObject):
                      content="Wird im Hintergrund heruntergeladen. Du kannst normal weiterarbeiten.",
                      isClosable=True, position=InfoBarPosition.BOTTOM_RIGHT, duration=8000, parent=self.window)
 
-    def _on_failed(self, message: str):
-        InfoBar.warning(title="Update verfügbar", content=message, isClosable=True,
-                        position=InfoBarPosition.BOTTOM_RIGHT, duration=-1, parent=self.window)
-
     def _on_ready(self, version: str):
         self.pending_version = version
         box = MessageBox(f"Update auf Version {version} bereit",
-                         "Das Update ist heruntergeladen. Für die Installation startet Schalk neu, das dauert nur einen Moment. "
-                         "Deine Daten bleiben unverändert.\n\nBei „Später“ wird das Update beim nächsten Schließen installiert.",
+                         "Das Update ist heruntergeladen. Für die Installation startet Schalk neu, Windows fragt dabei einmal "
+                         "nach der Berechtigung. Deine Daten bleiben unverändert.\n\nBei „Später“ wird das Update beim nächsten Schließen installiert.",
                          self.window)
         box.yesButton.setText("Jetzt neu starten")
         box.cancelButton.setText("Später")

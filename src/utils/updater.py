@@ -1,23 +1,22 @@
 """
 Automatic updates from GitHub releases.
 
-On every start the latest release is looked up. If it is newer, its ZIP is downloaded, verified against
-the SHA-256 digest GitHub publishes for the asset and unpacked into a staging folder. The new files are
-copied over the program folder by a small batch script that waits until Schalk has exited, so the
-running program never replaces its own files. User data lives in %LOCALAPPDATA%\\Schalk and is not touched.
-Only the packaged EXE updates itself; a source checkout (python run.py) is never modified.
+Schalk is installed with Schalk-Setup (into C:\\Program Files\\Schalk). On every start the latest release
+is looked up. If it is newer, its setup is downloaded and verified against the SHA-256 digest GitHub
+publishes for every release asset. After Schalk has exited, a small script runs the setup silently with
+administrator rights (Windows asks once via UAC); the setup replaces the program files and starts the
+new version. User data lives in %LOCALAPPDATA%\\Schalk and is not touched. Only the installed EXE updates
+itself; a source checkout (python run.py) is never modified.
 """
 import hashlib
 import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import urllib.request
-import zipfile
 from dataclasses import dataclass
 from typing import Optional
 from src.utils import paths
@@ -27,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 REPOSITORY = "niklastheiler/Schalk"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
-ASSET_PATTERN = re.compile(r"Schalk-v(?P<version>[\d.]+)-windows-x64\.zip")
+SETUP_PATTERN = re.compile(r"Schalk-Setup-v(?P<version>[\d.]+)\.exe")
+SETUP_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 UPDATE_DIR = os.path.join(paths.DATA_DIR, "updates")
 APPLY_SCRIPT = os.path.join(UPDATE_DIR, "apply_update.cmd")
 TIMEOUT = 30
@@ -54,13 +54,11 @@ def is_newer(candidate: str, current: str = APP_VERSION) -> bool:
     return version_key(candidate) > version_key(current)
 
 
-def is_installed_build() -> bool:
-    """Only the packaged EXE updates itself."""
-    return bool(getattr(sys, "frozen", False))
-
-
-def install_dir() -> str:
-    return os.path.dirname(os.path.abspath(sys.executable))
+def is_installed() -> bool:
+    """Only an installation made with Schalk-Setup (it has an uninstaller) updates itself."""
+    if not getattr(sys, "frozen", False):
+        return False
+    return os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "unins000.exe"))
 
 
 def _request(url: str, accept: str = "application/vnd.github+json"):
@@ -69,11 +67,11 @@ def _request(url: str, accept: str = "application/vnd.github+json"):
 
 
 def parse_release(data: dict) -> Optional[Release]:
-    """The release's Windows ZIP, or None if the release has none (or is a draft/pre-release)."""
+    """The release's setup, or None if it has none (or is a draft/pre-release)."""
     if data.get("draft") or data.get("prerelease"):
         return None
     for asset in data.get("assets", []):
-        match = ASSET_PATTERN.fullmatch(asset.get("name", ""))
+        match = SETUP_PATTERN.fullmatch(asset.get("name", ""))
         if match:
             digest = asset.get("digest") or ""
             return Release(
@@ -86,41 +84,49 @@ def parse_release(data: dict) -> Optional[Release]:
     return None
 
 
-def fetch_latest_release() -> Optional[Release]:
-    with _request(LATEST_RELEASE_URL) as response:
-        return parse_release(json.load(response))
-
-
 def find_update() -> Optional[Release]:
     """The latest release if it is newer than the running version."""
-    release = fetch_latest_release()
+    with _request(LATEST_RELEASE_URL) as response:
+        release = parse_release(json.load(response))
     if release and is_newer(release.version):
         return release
     return None
 
 
-def staged_dir(version: str) -> str:
-    return os.path.join(UPDATE_DIR, f"Schalk-{version}")
+def staged_setup(version: str) -> str:
+    return os.path.join(UPDATE_DIR, f"Schalk-Setup-v{version}.exe")
+
+
+def _staged_versions() -> dict:
+    """version -> path of every downloaded and verified setup."""
+    if not os.path.isdir(UPDATE_DIR):
+        return {}
+    return {m.group("version"): os.path.join(UPDATE_DIR, name)
+            for name in os.listdir(UPDATE_DIR) if (m := SETUP_PATTERN.fullmatch(name))}
 
 
 def staged_version() -> Optional[str]:
-    """Version of a completely prepared update waiting to be installed."""
-    if not os.path.isdir(UPDATE_DIR):
-        return None
-    versions = [name[len("Schalk-"):] for name in os.listdir(UPDATE_DIR)
-                if name.startswith("Schalk-") and os.path.isfile(os.path.join(UPDATE_DIR, name, "Schalk.exe"))]
-    newer = [v for v in versions if is_newer(v)]
+    """Version of a downloaded update waiting to be installed."""
+    newer = [v for v in _staged_versions() if is_newer(v)]
     return max(newer, key=version_key) if newer else None
 
 
+def remove_installed_updates():
+    """Deletes setups of versions that are already installed (or older)."""
+    for version, path in _staged_versions().items():
+        if not is_newer(version):
+            os.remove(path)
+
+
 def download(release: Release, progress=None) -> str:
-    """Downloads, verifies and unpacks the release. Returns the staged program folder."""
-    target = staged_dir(release.version)
-    if os.path.isfile(os.path.join(target, "Schalk.exe")):
+    """Downloads the setup and verifies its SHA-256 digest. Returns the path of the verified setup."""
+    target = staged_setup(release.version)
+    if os.path.isfile(target):
         return target
     os.makedirs(UPDATE_DIR, exist_ok=True)
     sha256 = hashlib.sha256()
-    fd, zip_path = tempfile.mkstemp(suffix=".zip", dir=UPDATE_DIR)
+    # Only a complete and verified download gets the setup's name
+    fd, temp_path = tempfile.mkstemp(suffix=".download", dir=UPDATE_DIR)
     try:
         with os.fdopen(fd, "wb") as f, _request(release.url, accept="application/octet-stream") as response:
             done = 0
@@ -130,80 +136,39 @@ def download(release: Release, progress=None) -> str:
                 done += len(chunk)
                 if progress:
                     progress(done, release.size)
-        if release.sha256 and sha256.hexdigest() != release.sha256:
+        if not release.sha256:
+            raise ValueError("Für das Update ist keine Prüfsumme veröffentlicht.")
+        if sha256.hexdigest() != release.sha256:
             raise ValueError("Die heruntergeladene Datei ist beschädigt (Prüfsumme stimmt nicht).")
-        _unpack(zip_path, target)
+        os.replace(temp_path, target)
     finally:
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
     return target
 
 
-def _unpack(zip_path: str, target: str):
-    temp_target = target + ".partial"
-    shutil.rmtree(temp_target, ignore_errors=True)
-    with zipfile.ZipFile(zip_path) as archive:
-        root = os.path.abspath(temp_target)
-        for member in archive.infolist():
-            # Nothing may be written outside the staging folder
-            dest = os.path.abspath(os.path.join(root, member.filename))
-            if os.path.commonpath([root, dest]) != root:
-                raise ValueError(f"Ungültiger Pfad im Update: {member.filename}")
-        archive.extractall(temp_target)
-    # The release ZIP contains the folder "Schalk" with Schalk.exe and _internal
-    program = os.path.join(temp_target, "Schalk")
-    if not os.path.isfile(os.path.join(program, "Schalk.exe")):
-        shutil.rmtree(temp_target, ignore_errors=True)
-        raise ValueError("Das Update enthält kein Schalk.exe.")
-    shutil.rmtree(target, ignore_errors=True)
-    os.replace(program, target)
-    shutil.rmtree(temp_target, ignore_errors=True)
-
-
-def build_apply_script(source: str, destination: str, pid: int, restart: bool) -> str:
+def build_apply_script(setup: str, pid: int, restart: bool) -> str:
     """
-    Batch script that waits for Schalk (pid) to exit, replaces the program files and optionally restarts.
-    _internal is removed first so no files of the old version remain; other files in the folder stay.
+    Waits for Schalk (pid) to exit, then runs the setup silently with administrator rights. /STARTAPP=1
+    makes the setup start the new version afterwards. If the user declines the UAC prompt nothing changes
+    and the update is offered again on the next start.
     """
-    restart_line = f'start "" "{destination}\\Schalk.exe"' if restart else "rem no restart"
+    arguments = f"{SETUP_ARGS} /STARTAPP={1 if restart else 0}"
     return "\r\n".join([
         "@echo off",
-        "setlocal",
         ":wait",
         f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto wait)',
-        f'if exist "{destination}\\_internal" rmdir /s /q "{destination}\\_internal"',
-        f'robocopy "{source}" "{destination}" /E /R:10 /W:1 /NFL /NDL /NJH /NJS /NP >nul',
-        "if errorlevel 8 goto failed",
-        f'rmdir /s /q "{source}"',
-        restart_line,
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process -FilePath '{setup}' "
+        f"-ArgumentList '{arguments}' -Verb RunAs\"",
         'del "%~f0" & exit /b 0',
-        ":failed",
-        f'echo Update fehlgeschlagen, robocopy-Code %errorlevel% > "{UPDATE_DIR}\\update_error.log"',
-        restart_line,
-        "exit /b 1",
         "",
     ])
 
 
 def apply_on_exit(version: str, restart: bool):
     """Starts the installer script detached; it waits until this process has exited."""
-    destination = install_dir()
-    if not (os.path.isfile(os.path.join(destination, "Schalk.exe")) and os.path.isdir(os.path.join(destination, "_internal"))):
-        raise RuntimeError(f"Unerwarteter Programmordner: {destination}")
     with open(APPLY_SCRIPT, "w", encoding="ascii", errors="replace") as f:
-        f.write(build_apply_script(staged_dir(version), destination, os.getpid(), restart))
+        f.write(build_apply_script(staged_setup(version), os.getpid(), restart))
     flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     subprocess.Popen(["cmd.exe", "/c", APPLY_SCRIPT], creationflags=flags, close_fds=True, cwd=UPDATE_DIR)
     logger.info("Update auf %s wird nach dem Beenden installiert (Neustart: %s)", version, restart)
-
-
-def can_write_install_dir() -> bool:
-    """Updating needs write access to the program folder (not given under C:\\Program Files)."""
-    try:
-        probe = os.path.join(install_dir(), ".schalk_update_probe")
-        with open(probe, "w"):
-            pass
-        os.remove(probe)
-        return True
-    except OSError:
-        return False

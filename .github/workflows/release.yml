@@ -42,7 +42,7 @@ jobs:
         shell: cmd
         run: build.bat
 
-      - name: ZIP und Release-Text erstellen
+      - name: Prüfregeln kontrollieren und Release-Text erstellen
         shell: pwsh
         run: |
           # The official validation rules must be part of the EXE, otherwise the XRechnung export fails
@@ -50,7 +50,6 @@ jobs:
             if (-not (Test-Path "dist/Schalk/_internal/src/resources/$rules")) { throw "Prüfregeln fehlen in der EXE: $rules" }
           }
           Copy-Item LICENSE dist/Schalk/LICENSE.txt
-          Compress-Archive -Path dist/Schalk -DestinationPath "Schalk-$env:TAG-windows-x64.zip"
           # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
           $version = $env:TAG.TrimStart("v")
           $lines = Get-Content CHANGELOG.md -Encoding utf8
@@ -60,6 +59,29 @@ jobs:
           for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith("## ")) { $end = $i; break } }
           $lines[($start + 1)..($end - 1)] | Set-Content release-notes.md -Encoding utf8
 
+      - name: Installer bauen und testen
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup konnte nicht installiert werden" }
+          }
+          $version = $env:TAG.TrimStart("v")
+          & $iscc /Q "/DAppVersion=$version" installer\schalk.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer-Build fehlgeschlagen ($LASTEXITCODE)" }
+          $setup = "dist\Schalk-Setup-$env:TAG.exe"
+          # Smoke test: silent installation into a temporary folder and uninstallation
+          $target = Join-Path $env:RUNNER_TEMP "SchalkInstallTest"
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Testinstallation fehlgeschlagen ($($p.ExitCode))" }
+          foreach ($file in "Schalk.exe", "_internal", "unins000.exe") {
+            if (-not (Test-Path (Join-Path $target $file))) { throw "Nach der Installation fehlt $file" }
+          }
+          $p = Start-Process (Join-Path $target "unins000.exe") -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Testdeinstallation fehlgeschlagen ($($p.ExitCode))" }
+          Move-Item $setup .
+
       # Runs on other branches only build and test (to try out the workflow), nothing is published
       - uses: softprops/action-gh-release@v3
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
@@ -68,4 +90,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Schalk ${{ env.TAG }}
           body_path: release-notes.md
-          files: Schalk-${{ env.TAG }}-windows-x64.zip
+          files: Schalk-Setup-${{ env.TAG }}.exe
