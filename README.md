@@ -66,6 +66,14 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 - Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Eingangsrechnungen werden storniert, nie gelöscht.
 - Jede Aktion wird mit dem Windows-Benutzer protokolliert (Verlauf). Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft.
 
+## Prüfregeln aktuell halten
+
+Die offiziellen Prüfregeln (CEN EN 16931, KoSIT XRechnung) liegen unter `src/resources`, ihre Versionen stehen in `src/resources/rules.json`. Ein wöchentlicher Workflow prüft, ob es neuere Versionen gibt, und legt dann ein Issue an. Aktualisiert wird mit:
+
+```powershell
+python tools/rule_updates.py --update
+```
+
 ## Tests
 
 ```powershell
