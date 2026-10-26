@@ -1,66 +1,40 @@
-# Builds Schalk.exe on Windows and publishes a GitHub release.
-# Started by pushing a version tag (e.g. v1.0) or manually ("Run workflow"); a manual run
-# releases the version from src/version.py and creates its tag on the current commit.
+# TEMPORARY diagnostics branch (not for merging): finds the crash at interpreter exit on Windows
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  release:
+  diagnose:
     runs-on: windows-latest
     env:
       QT_QPA_PLATFORM: offscreen
+      PYTHONFAULTHANDLER: "1"
+    defaults:
+      run:
+        shell: cmd
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-
-      - name: Version prüfen
-        shell: pwsh
+      - run: python -m pip install -q -r requirements-dev.txt
+      - name: Einzeltests
         run: |
-          $version = (Select-String -Path src/version.py -Pattern 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
-          $tag = if ("${{ github.event_name }}" -eq "push") { "${{ github.ref_name }}" } else { "v$version" }
-          if ($tag -ne "v$version") {
-            throw "Tag $tag passt nicht zu APP_VERSION $version in src/version.py"
-          }
-          "TAG=$tag" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Tests und EXE bauen
-        shell: cmd
-        run: build.bat
-
-      - name: ZIP und Release-Text erstellen
-        shell: pwsh
-        run: |
-          # The official validation rules must be part of the EXE, otherwise the XRechnung export fails
-          foreach ($rules in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt") {
-            if (-not (Test-Path "dist/Schalk/_internal/src/resources/$rules")) { throw "Prüfregeln fehlen in der EXE: $rules" }
-          }
-          Copy-Item LICENSE dist/Schalk/LICENSE.txt
-          Compress-Archive -Path dist/Schalk -DestinationPath "Schalk-$env:TAG-windows-x64.zip"
-          # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
-          $version = $env:TAG.TrimStart("v")
-          $lines = Get-Content CHANGELOG.md -Encoding utf8
-          $start = [array]::IndexOf($lines, "## $version")
-          if ($start -lt 0) { throw "CHANGELOG.md enthält keinen Abschnitt '## $version'" }
-          $end = $lines.Count
-          for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith("## ")) { $end = $i; break } }
-          $lines[($start + 1)..($end - 1)] | Set-Content release-notes.md -Encoding utf8
-
-      # Runs on other branches only build and test (to try out the workflow), nothing is published
-      - uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
-        with:
-          tag_name: ${{ env.TAG }}
-          target_commitish: ${{ github.sha }}
-          name: Schalk ${{ env.TAG }}
-          body_path: release-notes.md
-          files: Schalk-${{ env.TAG }}-windows-x64.zip
+          python -c "from saxonche import PySaxonProcessor; p = PySaxonProcessor(license=False); x = p.new_xslt30_processor()"
+          echo SAXON_ONLY exit %errorlevel%
+          python -c "from src.utils.einvoice_validation import validate_en16931, _processor; _processor()"
+          echo SAXON_SCHALK exit %errorlevel%
+          python -c "from PySide6.QtWidgets import QApplication; app = QApplication([])"
+          echo QAPP_ONLY exit %errorlevel%
+          python -c "from PySide6.QtWidgets import QApplication; app = QApplication([]); from saxonche import PySaxonProcessor; p = PySaxonProcessor(license=False)"
+          echo QAPP_SAXON exit %errorlevel%
+          python -m pytest -q tests/test_einvoice_compliance.py
+          echo PYTEST_COMPLIANCE exit %errorlevel%
+          python -m pytest -q tests/test_cashbook_and_storage.py
+          echo PYTEST_STORAGE exit %errorlevel%
+          python -m pytest -q tests/test_ui.py
+          echo PYTEST_UI exit %errorlevel%
+          python -m pytest -q tests/test_sorting.py
+          echo PYTEST_SORTING exit %errorlevel%
+          exit /b 0
