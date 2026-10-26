@@ -11,13 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from src.utils import paths
-
-SELLER = {
-    "company_name": "Test & Söhne GmbH", "first_name": "Max", "last_name": "Muster", "address": "Hauptstr. 1",
-    "postal_code": "10115", "city": "Berlin", "tax_id": "12/345/67890", "vat_id": "DE100000008",
-    "email": "info@test.de", "phone": "030 123456", "iban": "DE02120300000000202051", "bic": "BYLADEM1001",
-    "bank_name": "Bank", "payment_terms_days": "14",
-}
+from einvoice_cases import SELLER
 
 
 @pytest.fixture(scope="session")
