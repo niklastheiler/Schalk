@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2
+
+- Installation per Setup nach C:\Programme\Schalk mit Startmenü-/Desktop-Verknüpfung und Deinstallation über „Apps & Features“; die portable ZIP entfällt
+- Automatische Updates: Schalk prüft beim Start im Hintergrund auf ein neues Release, lädt es herunter, prüft es per SHA-256 und installiert es nach Rückfrage beim Neustart
+- Umstieg von 1.1.1 oder älter: das Setup von 1.2 einmal von Hand installieren, danach aktualisiert sich Schalk selbst
+
 ## 1.1.1
 
 - Sicherheitsupdate: cryptography 50.0.2
