@@ -1,9 +1,117 @@
-from qfluentwidgets import InfoBar, InfoBarPosition, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel, TableWidget
-from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QMessageBox, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
 from src.controllers.db_controller import DBController
-from src.views.customer_editor import CustomerEditor
 from src.utils.signal_bus import SignalBus
+from src.views.common import Column, ListPage, confirm, notify_error, notify_success
+from src.views.invoice_interface import add_action
+
+
+class CustomerEditor(QWidget):
+    saved = Signal(int)
+    canceled = Signal()
+
+    FIELDS = [
+        ("company_name", "Firma", "Firma"),
+        ("first_name", "Vorname", "Vorname"),
+        ("last_name", "Nachname", "Nachname"),
+        ("address", "Adresse", "Straße und Hausnummer"),
+        ("postal_code", "PLZ", "PLZ"),
+        ("city", "Ort", "Ort"),
+        ("country", "Land", "Ländercode, z. B. DE, AT, FR"),
+        ("email", "E-Mail", "Empfangsadresse für E-Rechnungen"),
+        ("phone", "Telefon", "Telefon"),
+        ("vat_id", "USt-IdNr.", "Pflicht bei Reverse Charge / EU-Lieferung"),
+        ("buyer_reference", "Käuferreferenz", "z. B. Leitweg-ID bei Behörden (XRechnung)"),
+    ]
+
+    def __init__(self, db_controller: DBController, parent=None):
+        super().__init__(parent=parent)
+        self.db_controller = db_controller
+        self.current_customer_id = None
+        self.edits = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        header = QHBoxLayout()
+        back = PushButton("Zurück")
+        back.clicked.connect(self.canceled.emit)
+        self.titleLabel = SubtitleLabel("Neuer Kunde")
+        save = PrimaryPushButton("Kunde speichern")
+        save.clicked.connect(self.save_customer)
+        header.addWidget(back)
+        header.addStretch(1)
+        header.addWidget(self.titleLabel)
+        header.addStretch(1)
+        header.addWidget(save)
+        layout.addLayout(header)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        for key, label, placeholder in self.FIELDS:
+            edit = LineEdit()
+            edit.setPlaceholderText(placeholder)
+            form.addRow(label, edit)
+            self.edits[key] = edit
+        layout.addLayout(form)
+        layout.addStretch(1)
+
+    def clear_form(self):
+        self.current_customer_id = None
+        self.titleLabel.setText("Neuer Kunde")
+        for edit in self.edits.values():
+            edit.clear()
+        self.edits["country"].setText("DE")
+
+    def load_customer(self, customer_id: int):
+        self.clear_form()
+        customer = self.db_controller.get_customer(customer_id)
+        if not customer:
+            return
+        self.current_customer_id = customer_id
+        self.titleLabel.setText("Kunde bearbeiten")
+        for key, edit in self.edits.items():
+            edit.setText(getattr(customer, key) or "")
+
+    def save_customer(self):
+        values = {key: edit.text().strip() for key, edit in self.edits.items()}
+        if not values["company_name"] and not (values["first_name"] or values["last_name"]):
+            notify_error(self, "Fehler", "Bitte geben Sie entweder eine Firma oder einen Namen an.")
+            return
+        values["country"] = (values["country"] or "DE").upper()
+        if self.current_customer_id:
+            self.db_controller.update_customer(self.current_customer_id, **values)
+            saved_id = self.current_customer_id
+        else:
+            saved_id = self.db_controller.add_customer(**values)
+        self.saved.emit(saved_id)
+
+
+class CustomerListPage(ListPage):
+    def __init__(self, interface: "CustomerInterface"):
+        self.interface = interface
+        self.c = interface.db_controller
+        columns = [
+            Column("Firma", lambda c: c.company_name or ""),
+            Column("Name", lambda c: f"{c.first_name or ''} {c.last_name or ''}".strip(), width=200),
+            Column("Adresse", lambda c: c.address or "", width=220),
+            Column("PLZ", lambda c: c.postal_code or "", width=80),
+            Column("Ort", lambda c: c.city or "", width=150),
+            Column("E-Mail", lambda c: c.email or "", width=200),
+            Column("USt-IdNr.", lambda c: c.vat_id or "", width=130),
+        ]
+        super().__init__("Kunden", columns, (SignalBus.get().customersChanged,), parent=interface)
+        self.add_header_button("Neuer Kunde", lambda: interface.show_editor(), primary=True)
+
+    def records(self) -> list:
+        return self.c.get_customers()
+
+    def on_activated(self, customer):
+        self.interface.show_editor(customer.id)
+
+    def fill_context_menu(self, menu: RoundMenu, customer):
+        add_action(menu, FIF.EDIT, "Bearbeiten", lambda: self.interface.show_editor(customer.id))
+        add_action(menu, FIF.DELETE, "Löschen", lambda: self.interface.delete(customer.id))
 
 
 class CustomerInterface(QWidget):
@@ -11,243 +119,36 @@ class CustomerInterface(QWidget):
         super().__init__(parent=parent)
         self.setObjectName("CustomerInterface")
         self.db_controller = db_controller
-        
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
-        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.stackedWidget = QStackedWidget(self)
-        self.vBoxLayout.addWidget(self.stackedWidget)
-        
-        # View 1: List
-        self.list_view = QWidget()
-        self.init_list_view()
-        self.stackedWidget.addWidget(self.list_view)
-        
-        # View 2: Editor
-        self.editor_view = CustomerEditor(self.db_controller)
-        self.editor_view.saved.connect(self.on_customer_saved)
-        self.editor_view.canceled.connect(lambda: self.show_list_view(reload=False))
-        self.stackedWidget.addWidget(self.editor_view)
-        
-        self.show_list_view()
-        SignalBus.get().customerAdded.connect(self.insert_row)
-        SignalBus.get().customerUpdated.connect(self.update_row)
-        SignalBus.get().customerDeleted.connect(self.remove_row)
+        layout.addWidget(self.stackedWidget)
+        self.list_page = CustomerListPage(self)
+        self.editor = CustomerEditor(db_controller)
+        self.editor.saved.connect(self._on_saved)
+        self.editor.canceled.connect(self.show_list)
+        self.stackedWidget.addWidget(self.list_page)
+        self.stackedWidget.addWidget(self.editor)
 
-    def init_list_view(self):
-        layout = QVBoxLayout(self.list_view)
-        layout.setContentsMargins(24, 24, 24, 24)
-        
-        # Header
-        headerLayout = QHBoxLayout()
-        self.titleLabel = SubtitleLabel("Kunden", self.list_view)
-        
-        self.searchLineEdit = SearchLineEdit(self.list_view)
-        self.searchLineEdit.setPlaceholderText("Suchen...")
-        self.searchLineEdit.setFixedWidth(300)
-        
-        self.newCustomerBtn = PrimaryPushButton("Neuer Kunde", self.list_view)
-        self.newCustomerBtn.clicked.connect(self.show_editor_view)
-        
-        headerLayout.addWidget(self.titleLabel)
-        headerLayout.addStretch(1)
-        headerLayout.addWidget(self.searchLineEdit)
-        headerLayout.addWidget(self.newCustomerBtn)
-        
-        layout.addLayout(headerLayout)
-        
-        # Table
-        self.table = TableWidget(self.list_view)
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(['Firma', 'Name', 'Adresse', 'PLZ', 'Ort'])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.table.setColumnWidth(0, 180)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
-        self.table.setColumnWidth(1, 180)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
-        self.table.setColumnWidth(3, 80)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
-        self.table.setColumnWidth(4, 120)
+    def show_list(self):
+        self.stackedWidget.setCurrentWidget(self.list_page)
 
-        # Performance optimization for scrolling with setCellWidget
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(45)
-        from PySide6.QtWidgets import QAbstractItemView
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.table.itemDoubleClicked.connect(self.on_item_double_clicked)
-        
-        layout.addWidget(self.table)
-        
-        self.load_data()
-
-
-    def showEvent(self, event):
-        super().showEvent(event)
-
-    def show_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item: return
-        row = item.row()
-        cust_id_item = self.table.item(row, 0)
-        if not cust_id_item: return
-        cust_id = cust_id_item.data(Qt.UserRole)
-        
-        cust = self.db_controller.get_customer(cust_id)
-        if not cust: return
-
-        from qfluentwidgets import RoundMenu, Action
-        from qfluentwidgets import FluentIcon as FIF
-        menu = RoundMenu(parent=self.table)
-        
-        edit_action = Action(FIF.EDIT, "Bearbeiten", self)
-        edit_action.triggered.connect(lambda: self.show_editor_view(cust_id))
-        menu.addAction(edit_action)
-        
-        delete_action = Action(FIF.DELETE, "Löschen", self)
-        delete_action.triggered.connect(lambda: self.delete_customer(cust_id))
-        menu.addAction(delete_action)
-            
-        menu.exec(self.table.viewport().mapToGlobal(pos))
-
-    def on_item_double_clicked(self, item):
-        row = item.row()
-        cust_id_item = self.table.item(row, 0)
-        if not cust_id_item: return
-        cust_id = cust_id_item.data(Qt.UserRole)
-        self.show_editor_view(cust_id)
-
-    def filter_table(self):
-        search_text = self.searchLineEdit.text().lower()
-        
-        for i in range(self.table.rowCount()):
-            match_search = False
-            if not search_text: match_search = True
-            else:
-                for col in range(5):
-                    item = self.table.item(i, col)
-                    if item and search_text in item.text().lower():
-                        match_search = True
-                        break
-            self.table.setRowHidden(i, not match_search)
-
-    def load_data(self):
-
-        self.table.setRowCount(0)
-        customers = self.db_controller.get_customers()
-        for i, cust in enumerate(customers):
-            self._update_or_insert_row(i, cust, is_new=True)
-            
-        self.filter_table()
-
-
-    def _update_or_insert_row(self, i, cust, is_new=False):
-        from PySide6.QtWidgets import QTableWidgetItem, QWidget, QHBoxLayout
-        from PySide6.QtCore import Qt
-        from qfluentwidgets import PushButton
-        if is_new:
-            self.table.insertRow(i)
-        first_item = QTableWidgetItem(cust.company_name if cust.company_name else "")
-        first_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-        first_item.setData(Qt.UserRole, cust.id)
-        self.table.setItem(i, 0, first_item)
-        self.table.setItem(i, 1, QTableWidgetItem(f"{cust.first_name or ''} {cust.last_name or ''}".strip()))
-        self.table.setItem(i, 2, QTableWidgetItem(cust.address or ""))
-        self.table.setItem(i, 3, QTableWidgetItem(cust.postal_code or ""))
-        self.table.setItem(i, 4, QTableWidgetItem(cust.city or ""))
-
-    def show_list_view(self, reload=True):
-        self.stackedWidget.setCurrentIndex(0)
-        if reload:
-            self.load_data()
-
-    def show_editor_view(self, customer_id=None):
-        # We need to make sure invoice/quote views reload customers if modified
-        if customer_id and customer_id is not False: # Button clicked sends False as first arg
-            self.editor_view.load_customer(customer_id)
+    def show_editor(self, customer_id=None):
+        if customer_id:
+            self.editor.load_customer(customer_id)
         else:
-            self.editor_view.clear_form()
-        self.stackedWidget.setCurrentIndex(1)
-        
-    def delete_customer(self, customer_id):
-        # Ask for confirmation
-        msgBox = QMessageBox(self)
-        msgBox.setIcon(QMessageBox.Warning)
-        msgBox.setWindowTitle("Kunde löschen")
-        msgBox.setText("Möchten Sie diesen Kunden wirklich löschen?")
-        msgBox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msgBox.button(QMessageBox.Yes).setText("Ja")
-        msgBox.button(QMessageBox.No).setText("Nein")
-        msgBox.setDefaultButton(QMessageBox.No)
-        
-        if msgBox.exec() == QMessageBox.Yes:
-            success, reason = self.db_controller.delete_customer(customer_id)
-            if success:
-                # Find and remove row instantly for performance
-                for row in range(self.table.rowCount()):
-                    item = self.table.item(row, 0)
-                    if item and item.data(Qt.UserRole) == customer_id:
-                        self.table.removeRow(row)
-                        break
-                InfoBar.success("Gelöscht", "Der Kunde wurde erfolgreich gelöscht.", position=InfoBarPosition.TOP, parent=self.window())
-            else:
-                InfoBar.error(
-                    title="Fehler beim Löschen",
-                    content=f"Dieser Kunde kann nicht gelöscht werden, da noch {reason} mit ihm verknüpft sind.",
-                    orient=Qt.Horizontal,
-                    isClosable=True,
-                    position=InfoBarPosition.TOP,
-                    duration=5000,
-                    parent=self.window()
-                )
-        
-    def on_customer_saved(self, customer_id):
-        InfoBar.success(
-            title="Erfolgreich",
-            content="Kunde wurde gespeichert.",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window()
-        )
-        self.show_list_view(reload=False)
-        
-        found = False
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == customer_id:
-                self.update_row(customer_id)
-                found = True
-                break
-                
-        if not found:
-            self.insert_row(customer_id)
+            self.editor.clear_form()
+        self.stackedWidget.setCurrentWidget(self.editor)
 
+    def _on_saved(self, customer_id):
+        notify_success(self, "Gespeichert", "Kunde wurde gespeichert.")
+        self.show_list()
 
-    def insert_row(self, customer_id):
-        customer = self.db_controller.get_customer(customer_id)
-        if not customer: return
-        self._update_or_insert_row(0, customer, is_new=True)
-
-    def update_row(self, customer_id):
-        customer = self.db_controller.get_customer(customer_id)
-        if not customer: return
-        from PySide6.QtCore import Qt
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == customer_id:
-                self._update_or_insert_row(row, customer, is_new=False)
-                break
-
-    def remove_row(self, customer_id):
-        from PySide6.QtCore import Qt
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == customer_id:
-                self.table.removeRow(row)
-                break
+    def delete(self, customer_id):
+        if not confirm(self, "Kunde löschen", "Möchten Sie diesen Kunden wirklich löschen?"):
+            return
+        success, reason = self.db_controller.delete_customer(customer_id)
+        if success:
+            notify_success(self, "Gelöscht", "Der Kunde wurde gelöscht.")
+        else:
+            notify_error(self, "Fehler beim Löschen", f"Dieser Kunde kann nicht gelöscht werden, da noch {reason} mit ihm verknüpft sind.")

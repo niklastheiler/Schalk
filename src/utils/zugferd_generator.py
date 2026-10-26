@@ -1,5 +1,11 @@
+"""
+Generates the structured invoice data (UN/CEFACT CII, EN 16931) for
+- ZUGFeRD / Factur-X (profile EN 16931, embedded into the PDF/A-3)
+- XRechnung 3.0 (CII syntax, pure XML; required by public authorities and accepted for B2B)
+"""
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import List
 from drafthorse.models.document import Document
 from drafthorse.models.accounting import ApplicableTradeTax, CategoryTradeTax, TradeAllowanceCharge
 from drafthorse.models.party import TaxRegistration
@@ -7,6 +13,10 @@ from drafthorse.models.payment import PaymentMeans, PaymentTerms
 from drafthorse.models.tradelines import LineItem
 from src.utils.calculations import tax_breakdown, round_money
 from src.utils.tax import vat_category
+
+GUIDELINE_EN16931 = "urn:cen.eu:en16931:2017"
+GUIDELINE_XRECHNUNG = "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0"
+BUSINESS_PROCESS = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"
 
 # UN/ECE Rec. 20 unit codes
 UNIT_CODES = {
@@ -20,14 +30,12 @@ UNIT_CODES = {
     "monat": "MON", "monate": "MON",
 }
 
-COUNTRY_CODES = {"deutschland": "DE", "österreich": "AT", "schweiz": "CH", "frankreich": "FR", "niederlande": "NL", "belgien": "BE", "luxemburg": "LU", "italien": "IT", "spanien": "ES", "polen": "PL", "dänemark": "DK"}
+COUNTRY_CODES = {"deutschland": "DE", "österreich": "AT", "schweiz": "CH", "frankreich": "FR", "niederlande": "NL",
+                 "belgien": "BE", "luxemburg": "LU", "italien": "IT", "spanien": "ES", "polen": "PL", "dänemark": "DK",
+                 "tschechien": "CZ", "schweden": "SE"}
 
 
-def _dec(value) -> Decimal:
-    return Decimal(str(round_money(value)))
-
-
-def _country(name) -> str:
+def country_code(name) -> str:
     if not name:
         return "DE"
     name = name.strip()
@@ -36,114 +44,147 @@ def _country(name) -> str:
     return COUNTRY_CODES.get(name.lower(), "DE")
 
 
+def _dec(value) -> Decimal:
+    return Decimal(str(round_money(value)))
+
+
 def _date(value):
     return value.date() if isinstance(value, datetime) else value
 
 
-def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
+def xrechnung_problems(db_controller, invoice) -> List[str]:
+    """Additional German XRechnung rules (BR-DE-*) on top of EN 16931."""
+    seller = db_controller.seller_of(invoice)
+    buyer = db_controller.buyer_of(invoice)
+    problems = []
+    if not (seller.get("first_name") or seller.get("last_name")):
+        problems.append("Ansprechpartner (Vor-/Nachname) in den Firmendaten fehlt (BR-DE-5).")
+    if not seller.get("phone"):
+        problems.append("Telefonnummer in den Firmendaten fehlt (BR-DE-6).")
+    if not seller.get("email"):
+        problems.append("E-Mail-Adresse in den Firmendaten fehlt (BR-DE-7).")
+    if not buyer.get("email"):
+        problems.append("E-Mail-Adresse des Kunden fehlt (elektronische Adresse BT-49).")
+    if not seller.get("iban") and not invoice.cancels_invoice_id:
+        problems.append("IBAN in den Bankdaten fehlt (Zahlungsanweisungen, BR-DE-1).")
+    return problems
+
+
+def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
+    """Returns the CII XML (validated against the XSD). profile: 'en16931' (ZUGFeRD) or 'xrechnung'."""
     if not invoice.items:
-        return False # Signal to caller that ZUGFeRD was skipped
+        raise ValueError("Eine E-Rechnung benötigt mindestens eine Position.")
+    seller = db_controller.seller_of(invoice)
+    buyer = db_controller.buyer_of(invoice)
 
     # A Stornorechnung is transmitted as credit note (381) with positive amounts
     is_storno = bool(invoice.cancels_invoice_id)
     sign = -1 if is_storno else 1
+    reason = invoice.tax_exemption_reason or ""
 
     doc = Document()
-    doc.context.guideline_parameter.id = "urn:cen.eu:en16931:2017"
+    doc.context.business_parameter.id = BUSINESS_PROCESS
+    doc.context.guideline_parameter.id = GUIDELINE_XRECHNUNG if profile == "xrechnung" else GUIDELINE_EN16931
 
     doc.header.id = invoice.invoice_number
     doc.header.type_code = "381" if is_storno else "380"
     doc.header.issue_date_time = _date(invoice.invoice_date)
 
+    # Käuferreferenz (BT-10); mandatory for XRechnung, the Leitweg-ID for public authorities
+    doc.trade.agreement.buyer_reference = buyer.get("buyer_reference") or (str(invoice.customer_id) if profile == "xrechnung" else None)
+
     # --- Seller ---
-    seller = doc.trade.agreement.seller
-    seller.name = db_controller.get_setting("company_name", "Meine Firma GmbH")
-    seller.address.line_one = db_controller.get_setting("address", "Musterstraße 1")
-    seller.address.postcode = db_controller.get_setting("postal_code", "12345")
-    seller.address.city_name = db_controller.get_setting("city", "Musterstadt")
-    seller.address.country_id = "DE"
-    email = db_controller.get_setting("email", "")
-    if email:
-        seller.electronic_address.uri_ID = ("EM", email)
-
-    vat_id = db_controller.get_setting("vat_id", "")
-    tax_id = db_controller.get_setting("tax_id", "")
-    if vat_id:
+    party = doc.trade.agreement.seller
+    party.name = seller.get("company_name") or f"{seller.get('first_name', '')} {seller.get('last_name', '')}".strip()
+    party.address.line_one = seller.get("address")
+    party.address.postcode = seller.get("postal_code")
+    party.address.city_name = seller.get("city")
+    party.address.country_id = "DE"
+    contact_name = f"{seller.get('first_name', '')} {seller.get('last_name', '')}".strip()
+    if contact_name:
+        party.contact.person_name = contact_name
+    if seller.get("phone"):
+        party.contact.telephone.number = seller["phone"]
+    if seller.get("email"):
+        party.contact.email.address = seller["email"]
+        party.electronic_address.uri_ID = ("EM", seller["email"])
+    if seller.get("vat_id"):
         reg = TaxRegistration()
-        reg.id = ("VA", vat_id)
-        seller.tax_registrations.add(reg)
-    if tax_id:
+        reg.id = ("VA", seller["vat_id"])
+        party.tax_registrations.add(reg)
+    if seller.get("tax_id"):
         reg = TaxRegistration()
-        reg.id = ("FC", tax_id)
-        seller.tax_registrations.add(reg)
+        reg.id = ("FC", seller["tax_id"])
+        party.tax_registrations.add(reg)
 
-    # --- Buyer (snapshot taken at finalization) ---
-    customer = invoice.customer
-    buyer = doc.trade.agreement.buyer
-    buyer.name = invoice.customer_name or (customer.company_name if customer.company_name else f"{customer.first_name} {customer.last_name}")
-    buyer.address.line_one = (invoice.customer_address if invoice.customer_name else customer.address) or "Unbekannt"
-    buyer.address.postcode = (invoice.customer_postal_code if invoice.customer_name else customer.postal_code) or "00000"
-    buyer.address.city_name = (invoice.customer_city if invoice.customer_name else customer.city) or "Unbekannt"
-    buyer.address.country_id = _country(invoice.customer_country if invoice.customer_name else customer.country)
-    if invoice.customer_vat_id:
+    # --- Buyer ---
+    party = doc.trade.agreement.buyer
+    party.name = buyer.get("name")
+    party.address.line_one = buyer.get("address")
+    party.address.postcode = buyer.get("postal_code")
+    party.address.city_name = buyer.get("city")
+    party.address.country_id = country_code(buyer.get("country"))
+    if buyer.get("email"):
+        party.electronic_address.uri_ID = ("EM", buyer["email"])
+    if buyer.get("vat_id"):
         reg = TaxRegistration()
-        reg.id = ("VA", invoice.customer_vat_id)
-        buyer.tax_registrations.add(reg)
+        reg.id = ("VA", buyer["vat_id"])
+        party.tax_registrations.add(reg)
 
-    # --- Delivery date ---
+    # --- Delivery date (BT-72) ---
     doc.trade.delivery.event.occurrence = _date(invoice.delivery_date)
 
     # --- Settlement ---
     settlement = doc.trade.settlement
     settlement.currency_code = "EUR"
     if is_storno:
-        original = db_controller.get_invoice(invoice.cancels_invoice_id)
+        original = db_controller.get_invoice_header(invoice.cancels_invoice_id)
         if original:
             settlement.invoice_referenced_document.issuer_assigned_id = original.invoice_number
             settlement.invoice_referenced_document.issue_date_time = _date(original.invoice_date)
 
-    iban = db_controller.get_setting("iban", "").replace(" ", "")
+    iban = (seller.get("iban") or "").replace(" ", "")
     if iban and not is_storno:
         means = PaymentMeans()
         means.type_code = "58" # SEPA credit transfer
         means.payee_account.iban = iban
-        holder = db_controller.get_setting("account_holder", "")
-        if holder:
-            means.payee_account.account_name = holder
-        bic = db_controller.get_setting("bic", "").replace(" ", "")
+        if seller.get("account_holder"):
+            means.payee_account.account_name = seller["account_holder"]
+        bic = (seller.get("bic") or "").replace(" ", "")
         if bic:
             means.payee_institution.bic = bic
         settlement.payment_means.add(means)
 
     if not is_storno:
-        payment_days = db_controller.get_payment_terms()
+        payment_days = db_controller.payment_terms_of(invoice)
         terms = PaymentTerms()
         terms.description = f"Zahlbar innerhalb von {payment_days} Tagen ohne Abzug."
         terms.due = _date(invoice.invoice_date + timedelta(days=payment_days))
         settlement.terms.add(terms)
 
-    reason = invoice.tax_exemption_reason or ""
     credit = abs(invoice.credit_amount or 0.0)
     items = invoice.items
-    breakdown = tax_breakdown([{"total_price": abs(i.total_price), "tax_percent": i.tax_percent} for i in items], credit)
+    positive_items = [{"total_price": abs(i.total_price), "tax_percent": i.tax_percent} for i in items]
+    breakdown = tax_breakdown(positive_items, credit)
 
-    # One tax group per rate
+    # One tax group per rate (BG-23)
     for rate, (basis, tax_amount) in sorted(breakdown.items()):
         tax = ApplicableTradeTax()
         tax.calculated_amount = _dec(tax_amount)
         tax.basis_amount = _dec(basis)
+        category = vat_category(rate, reason)
         tax.type_code = "VAT"
-        tax.category_code = vat_category(rate, reason)
+        tax.category_code = category
         tax.rate_applicable_percent = Decimal(str(rate))
-        if tax.category_code != "S":
+        if category != "S": # BR-S-10: no exemption reason for the standard rate
             tax.exemption_reason = reason or "Steuerbefreit"
         settlement.trade_tax.add(tax)
 
     # The credit (Gutschrift) is a document level allowance, split over the tax rates
     if credit:
-        gross_nets = tax_breakdown([{"total_price": abs(i.total_price), "tax_percent": i.tax_percent} for i in items])
+        nets = tax_breakdown(positive_items)
         for rate in sorted(breakdown):
-            share = round_money(gross_nets[rate][0] - breakdown[rate][0])
+            share = round_money(nets[rate][0] - breakdown[rate][0])
             if not share:
                 continue
             allowance = TradeAllowanceCharge()
@@ -188,9 +229,6 @@ def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
 
         doc.trade.items.add(line)
 
-    # Validates against the Factur-X EN 16931 XSD
-    xml_bytes = doc.serialize(schema="FACTUR-X_EN16931")
-    with open(output_path, "wb") as f:
-        f.write(xml_bytes)
+    # Validates against the Factur-X EN 16931 XSD (same CII D16B schema as XRechnung CII)
+    return doc.serialize(schema="FACTUR-X_EN16931")
 
-    return output_path

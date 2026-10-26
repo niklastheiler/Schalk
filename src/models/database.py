@@ -1,16 +1,25 @@
 import os
 import base64
+import logging
 import sqlite3
 import struct
+import threading
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.pool import StaticPool
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+logger = logging.getLogger(__name__)
+
 Base = declarative_base()
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
 
 class Setting(Base):
     __tablename__ = 'settings'
@@ -26,55 +35,66 @@ class Customer(Base):
     address = Column(String)
     postal_code = Column(String)
     city = Column(String)
-    country = Column(String, default="Deutschland")
+    country = Column(String, default="DE")
     email = Column(String)
     phone = Column(String)
     vat_id = Column(String)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Käuferreferenz (BT-10), for public authorities the Leitweg-ID
+    buyer_reference = Column(String)
+    created_at = Column(DateTime, default=_utcnow)
+
+    @property
+    def display_name(self) -> str:
+        return self.company_name or f"{self.first_name or ''} {self.last_name or ''}".strip()
 
 class Invoice(Base):
     __tablename__ = 'invoices'
+    __table_args__ = (Index('ix_invoices_date', 'invoice_date'), Index('ix_invoices_customer', 'customer_id'))
     id = Column(Integer, primary_key=True, autoincrement=True)
     invoice_number = Column(String, unique=True, nullable=False)
     customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
     invoice_date = Column(DateTime, nullable=False)
     delivery_date = Column(DateTime, nullable=False)
-    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Bezahlt, Teilbezahlt, Überfällig, Storniert
+    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Teilbezahlt, Bezahlt, Überfällig, Storniert
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)
     gross_amount = Column(Float, default=0.0)
-    payment_terms = Column(String)
     credit_amount = Column(Float, default=0.0)
     credit_desc = Column(String)
     tax_exemption_reason = Column(String) # Required on the invoice if items have 0 % VAT
-    hash_chain = Column(String) # For GoBD immutability
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    hash_chain = Column(String) # GoBD: SHA-256 chain over all finalized invoices
+    created_at = Column(DateTime, default=_utcnow)
     archived_at = Column(DateTime)
     reminder_level = Column(Integer, default=0)
     last_reminder_date = Column(DateTime)
 
     # GoBD: set once when the invoice is finalized (leaves "Entwurf"); content is immutable afterwards
     finalized_at = Column(DateTime)
-    # Snapshot of the recipient at finalization, so later customer changes don't alter issued invoices
+    payment_terms_days = Column(Integer)
+    # Snapshots taken at finalization, so later changes of settings or customers don't alter issued invoices
+    seller_snapshot = Column(Text) # JSON
     customer_name = Column(String)
     customer_address = Column(String)
     customer_postal_code = Column(String)
     customer_city = Column(String)
     customer_country = Column(String)
     customer_vat_id = Column(String)
+    customer_email = Column(String)
+    customer_buyer_reference = Column(String)
     # Stornorechnung: references the cancelled invoice
     cancels_invoice_id = Column(Integer)
-    # Archived PDF exactly as issued
+    # Archived PDF/A-3 (ZUGFeRD) exactly as issued
     pdf_path = Column(String)
     pdf_hash = Column(String)
 
+    # Not loaded for the list cache; DBController.get_invoice() loads them for one document
     customer = relationship("Customer")
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan", order_by="InvoiceItem.id")
 
 class InvoiceItem(Base):
     __tablename__ = 'invoice_items'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    invoice_id = Column(Integer, ForeignKey('invoices.id'))
+    invoice_id = Column(Integer, ForeignKey('invoices.id'), index=True)
     title = Column(String, nullable=False)
     description = Column(Text)
     quantity = Column(Float, nullable=False, default=1.0)
@@ -90,14 +110,14 @@ class Quote(Base):
     __tablename__ = 'quotes'
     id = Column(Integer, primary_key=True, autoincrement=True)
     quote_number = Column(String, unique=True, nullable=False)
-    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
+    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False, index=True)
     quote_date = Column(DateTime, nullable=False)
-    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Versendet, Angenommen, Abgelehnt, Abgelaufen, Archiviert
+    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Versendet, Angenommen, Abgelehnt, Abgelaufen
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)
     gross_amount = Column(Float, default=0.0)
     tax_exemption_reason = Column(String)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_utcnow)
     archived_at = Column(DateTime)
 
     customer = relationship("Customer")
@@ -106,7 +126,7 @@ class Quote(Base):
 class QuoteItem(Base):
     __tablename__ = 'quote_items'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    quote_id = Column(Integer, ForeignKey('quotes.id'))
+    quote_id = Column(Integer, ForeignKey('quotes.id'), index=True)
     title = Column(String, nullable=False)
     description = Column(Text)
     quantity = Column(Float, nullable=False, default=1.0)
@@ -121,16 +141,16 @@ class QuoteItem(Base):
 class CashbookEntry(Base):
     __tablename__ = 'cashbook_entries'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entry_date = Column(DateTime, nullable=False)
+    entry_date = Column(DateTime, nullable=False, index=True)
     amount = Column(Float, nullable=False)
-    receipt_number = Column(String, nullable=False)
+    receipt_number = Column(String, nullable=False, unique=True)
     description = Column(String, nullable=False)
     category = Column(String)
     entry_type = Column(String, nullable=False) # Einnahme, Barentnahme Privat, Barentnahme Firma
     tax_percent = Column(Float, default=0.0)
     is_storno = Column(Boolean, default=False)
-    hash_chain = Column(String) # For GoBD
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    hash_chain = Column(String) # GoBD
+    created_at = Column(DateTime, default=_utcnow)
     attachment_path = Column(String)
     attachment_hash = Column(String)
     storno_of_id = Column(Integer)
@@ -138,24 +158,29 @@ class CashbookEntry(Base):
 class IncomingInvoice(Base):
     __tablename__ = 'incoming_invoices'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    invoice_type = Column(String, nullable=False) # "Lieferant" or "Sonstige"
+    invoice_type = Column(String, nullable=False, index=True) # "Lieferant" or "Sonstige"
     date = Column(DateTime, nullable=False)
     amount = Column(Float, nullable=False)
     description = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=_utcnow)
     file_hash = Column(String)
+    # E-Rechnung: format of the received document (None = no structured data)
+    einvoice_format = Column(String)
+    invoice_number = Column(String)
+    supplier_name = Column(String)
     # GoBD: incoming invoices are never deleted, only cancelled
     cancelled_at = Column(DateTime)
 
 class DocumentHistory(Base):
     __tablename__ = 'document_history'
+    __table_args__ = (Index('ix_history_document', 'document_type', 'document_id'),)
     id = Column(Integer, primary_key=True, autoincrement=True)
     document_type = Column(String, nullable=False) # Invoice, Quote, Cashbook, IncomingInvoice
     document_id = Column(Integer, nullable=False)
     user = Column(String, nullable=False)
     action = Column(String, nullable=False)
-    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime, default=_utcnow)
 
 
 class WrongPasswordError(Exception):
@@ -173,9 +198,84 @@ BACKUP_MAGIC = b"SCHALKB\x00"
 SALT_SIZE = 16
 KDF_ITERATIONS = 600_000
 
+
 def _derive_fernet(password: bytes, salt: bytes, iterations: int) -> Fernet:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
     return Fernet(base64.urlsafe_b64encode(kdf.derive(password)))
+
+
+def _write_atomic(path: str, payload: bytes):
+    # Atomic replace: a crash while writing never leaves a half-written file behind
+    temp_path = path + ".tmp"
+    with open(temp_path, "wb") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp_path, path)
+
+
+class _BackgroundWriter:
+    """
+    Encrypts and writes database snapshots on a worker thread. Snapshots that arrive while a
+    write is running are coalesced, so bursts of changes cost a single write.
+    """
+
+    def __init__(self, path: str, fernet: Fernet, on_error=None):
+        self._path = path
+        self._fernet = fernet
+        self._on_error = on_error
+        self._pending = None
+        self._busy = False
+        self._closed = False
+        self._cond = threading.Condition()
+        self.last_error = None
+        self._thread = threading.Thread(target=self._run, name="schalk-db-writer", daemon=True)
+        self._thread.start()
+
+    def submit(self, snapshot: bytes):
+        with self._cond:
+            if self._closed:
+                raise RuntimeError("Die Datenbank ist bereits geschlossen.")
+            self._pending = snapshot
+            self._cond.notify_all()
+
+    def _run(self):
+        while True:
+            with self._cond:
+                while self._pending is None and not self._closed:
+                    self._cond.wait()
+                if self._pending is None:
+                    return
+                snapshot, self._pending = self._pending, None
+                self._busy = True
+            try:
+                _write_atomic(self._path, FILE_MAGIC + self._fernet.encrypt(snapshot))
+                self.last_error = None
+            except Exception as e:
+                logger.exception("Speichern der Datenbank fehlgeschlagen")
+                self.last_error = e
+                if self._on_error:
+                    self._on_error(e)
+            finally:
+                with self._cond:
+                    self._busy = False
+                    self._cond.notify_all()
+
+    def flush(self):
+        with self._cond:
+            while self._pending is not None or self._busy:
+                self._cond.wait()
+        if self.last_error:
+            raise self.last_error
+
+    def close(self):
+        try:
+            self.flush()
+        finally:
+            with self._cond:
+                self._closed = True
+                self._cond.notify_all()
+            self._thread.join(timeout=30)
 
 
 class DatabaseManager:
@@ -186,14 +286,12 @@ class DatabaseManager:
     account), so no password prompt is needed at startup.
     """
 
-    def __init__(self, db_path: str, key_path: str, key_store=None):
+    def __init__(self, db_path: str, key_path: str, key_store=None, on_save_error=None):
         if key_store is None:
             from src.utils import key_store
         self.db_path = db_path
         self.key_path = key_path
-        self.engine = None
-        self.Session = None
-        self.memory_conn = None
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
 
         data = b""
         if os.path.exists(self.db_path):
@@ -221,45 +319,54 @@ class DatabaseManager:
             except InvalidToken:
                 raise WrongPasswordError("Die Datenbank passt nicht zum gespeicherten Schlüssel.")
 
-        self.connect(plaintext)
+        self._connect(plaintext)
+        self._restored = False
+        self._closed = False
+        self._writer = _BackgroundWriter(self.db_path, self.fernet, on_save_error)
 
-    def connect(self, plaintext=None):
+    def _connect(self, plaintext=None):
         self.memory_conn = sqlite3.connect(':memory:', check_same_thread=False)
         if plaintext:
             # Load straight from memory; no decrypted copy ever touches the disk
             self.memory_conn.deserialize(plaintext)
-                    
+        self.memory_conn.execute("PRAGMA foreign_keys = ON")
+
         self.engine = create_engine(
-            "sqlite://", 
+            "sqlite://",
             creator=lambda: self.memory_conn,
             poolclass=StaticPool,
             connect_args={'check_same_thread': False}
         )
         Base.metadata.create_all(self.engine)
-            
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
-    def _write_atomic(self, path: str, payload: bytes):
-        # Atomic replace: a crash while writing never leaves a half-written file behind
-        temp_path = path + ".tmp"
-        with open(temp_path, "wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, path)
-
     def save(self):
-        if not self.memory_conn:
+        """Persists the current state; encryption and disk I/O run in the background."""
+        if self._restored:
+            return # a restored backup must not be overwritten until the restart
+        self._writer.submit(self.memory_conn.serialize())
+
+    def flush(self):
+        """Blocks until all pending changes are on disk. Raises if the last write failed."""
+        if not self._restored:
+            self._writer.flush()
+
+    def close(self):
+        """Writes the final state and stops the writer. Raises (and stays usable) if writing fails."""
+        if self._restored or self._closed:
             return
-        self._write_atomic(self.db_path, FILE_MAGIC + self.fernet.encrypt(self.memory_conn.serialize()))
+        self.save()
+        self._writer.flush()
+        self._writer.close()
+        self._closed = True
 
     # --- Backups (portable, protected by a backup password instead of the machine-bound key) ---
     def export_backup(self, path: str, password: str):
         salt = os.urandom(SALT_SIZE)
         token = _derive_fernet(password.encode("utf-8"), salt, KDF_ITERATIONS).encrypt(self.memory_conn.serialize())
-        self._write_atomic(path, BACKUP_MAGIC + struct.pack(">I", KDF_ITERATIONS) + salt + token)
+        _write_atomic(path, BACKUP_MAGIC + struct.pack(">I", KDF_ITERATIONS) + salt + token)
 
-    def restore_backup(self, data: bytes, password: str = None):
+    def restore_backup(self, data: bytes, password: str):
         """
         Replaces the database file with the backup, re-encrypted with this computer's key.
         The application must be restarted afterwards.
@@ -284,4 +391,7 @@ class DatabaseManager:
         finally:
             check.close()
 
-        self._write_atomic(self.db_path, FILE_MAGIC + self.fernet.encrypt(plaintext))
+        # No further background writes may overwrite the restored file
+        self._writer.close()
+        self._restored = True
+        _write_atomic(self.db_path, FILE_MAGIC + self.fernet.encrypt(plaintext))

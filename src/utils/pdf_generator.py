@@ -1,34 +1,86 @@
 import datetime
+import os
+from functools import lru_cache
+from io import BytesIO
 from xml.sax.saxutils import escape
+import reportlab
+import reportlab.rl_config
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
-from src.controllers.db_controller import DBController, DRAFT_PREFIX
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.fonts import addMapping
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics import shapes
+from reportlab.graphics.shapes import Drawing
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from src.controllers.db_controller import DBController
 from src.models.database import Invoice
 from src.utils.calculations import tax_breakdown
+from src.utils.tax import format_rate
+
+FONT = "Vera"
+FONT_BOLD = "Vera-Bold"
 
 
-def _fmt_money(value: float) -> str:
+@lru_cache(maxsize=1)
+def _register_fonts():
+    # PDF/A requires embedded fonts; the standard 14 PDF fonts (Helvetica, ...) are not embedded
+    font_dir = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
+    for name, filename in ((FONT, "Vera.ttf"), (FONT_BOLD, "VeraBd.ttf"), ("Vera-Italic", "VeraIt.ttf"), ("Vera-BoldItalic", "VeraBI.ttf")):
+        pdfmetrics.registerFont(TTFont(name, os.path.join(font_dir, filename)))
+    addMapping(FONT, 0, 0, FONT)
+    addMapping(FONT, 1, 0, FONT_BOLD)
+    addMapping(FONT, 0, 1, "Vera-Italic")
+    addMapping(FONT, 1, 1, "Vera-BoldItalic")
+    # The canvas and the graphics renderer (GiroCode) start with these fonts; they must be embedded as well
+    reportlab.rl_config.canvas_basefontname = FONT
+    shapes.STATE_DEFAULTS["fontName"] = FONT
+
+
+@lru_cache(maxsize=1)
+def _styles():
+    _register_fonts()
+    styles = getSampleStyleSheet()
+    for style in styles.byName.values():
+        style.fontName = FONT_BOLD if "Heading" in style.name or style.name == "Title" else FONT
+    styles.add(ParagraphStyle(name='Small', parent=styles['Normal'], fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name='Cell', parent=styles['Normal'], fontSize=9, leading=11))
+    return styles
+
+
+def girocode(seller: dict, amount: float, reference: str):
+    """EPC-QR-Code (GiroCode) for SEPA transfers; scanned by banking apps. None if no IBAN."""
+    iban = (seller.get("iban") or "").replace(" ", "")
+    if not iban or amount <= 0:
+        return None
+    name = (seller.get("account_holder") or seller.get("company_name") or "")[:70]
+    payload = "\n".join(["BCD", "002", "1", "SCT", (seller.get("bic") or "").replace(" ", ""), name, iban,
+                         f"EUR{amount:.2f}", "", "", reference[:140]])
+    widget = QrCodeWidget(payload, barLevel="M")
+    x1, y1, x2, y2 = widget.getBounds()
+    size = 28 * mm
+    drawing = Drawing(size, size, transform=[size / (x2 - x1), 0, 0, size / (y2 - y1), 0, 0])
+    drawing.add(widget)
+    return drawing
+
+
+def fmt_money(value: float) -> str:
     # German format: 1.234,56 €
     return f"{value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _fmt_number(value: float) -> str:
+def fmt_number(value: float) -> str:
     text = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return text[:-3] if text.endswith(",00") else text
-
-
-def _fmt_rate(rate: float) -> str:
-    return f"{_fmt_number(rate)} %"
 
 
 class PDFGenerator:
     def __init__(self, db_controller: DBController):
         self.db_controller = db_controller
-        self.styles = getSampleStyleSheet()
-        self.styles.add(ParagraphStyle(name='Right', alignment=2))
-        self.styles.add(ParagraphStyle(name='Cell', parent=self.styles['Normal'], fontSize=9, leading=11))
+        self.styles = _styles()
 
     def _p(self, text, style='Normal', bold=False):
         # User data (names, addresses, item titles) must be escaped, reportlab parses Paragraphs as markup
@@ -37,50 +89,64 @@ class PDFGenerator:
             content = f"<b>{content}</b>"
         return Paragraph(content, self.styles[style])
 
-    def _company_header(self, elements):
-        company_name = self.db_controller.get_setting("company_name", "Meine Firma GmbH")
-        company_address = self.db_controller.get_setting("address", "Musterstraße 1")
-        company_city = f"{self.db_controller.get_setting('postal_code', '12345')} {self.db_controller.get_setting('city', 'Musterstadt')}"
+    def _doc(self, target, title: str):
+        seller = self.db_controller.current_seller()
+        return SimpleDocTemplate(target, pagesize=A4, rightMargin=20 * mm, leftMargin=20 * mm, topMargin=20 * mm,
+                                 bottomMargin=20 * mm, title=title, author=seller.get("company_name") or "", creator="Schalk")
 
-        elements.append(self._p(company_name, 'Heading1', bold=True))
-        elements.append(self._p(f"{company_address} | {company_city}"))
-
+    def _company_header(self, elements, seller: dict):
+        name = seller.get("company_name") or f"{seller.get('first_name', '')} {seller.get('last_name', '')}".strip()
+        header = [self._p(name, 'Heading1', bold=True),
+                  self._p(f"{seller.get('address', '')} | {seller.get('postal_code', '')} {seller.get('city', '')}")]
+        contact = " | ".join(v for v in (seller.get("phone"), seller.get("email")) if v)
+        if contact:
+            header.append(self._p(contact, 'Small'))
         tax_ids = []
-        tax_id = self.db_controller.get_setting("tax_id", "")
-        vat_id = self.db_controller.get_setting("vat_id", "")
-        if tax_id:
-            tax_ids.append(f"Steuernummer: {tax_id}")
-        if vat_id:
-            tax_ids.append(f"USt-IdNr.: {vat_id}")
+        if seller.get("tax_id"):
+            tax_ids.append(f"Steuernummer: {seller['tax_id']}")
+        if seller.get("vat_id"):
+            tax_ids.append(f"USt-IdNr.: {seller['vat_id']}")
         if tax_ids:
-            elements.append(self._p(" | ".join(tax_ids)))
+            header.append(self._p(" | ".join(tax_ids), 'Small'))
+
+        logo_path = self.db_controller.get_setting("logo_path")
+        if logo_path and os.path.isfile(logo_path):
+            logo = Image(logo_path)
+            logo._restrictSize(50 * mm, 25 * mm)
+            table = Table([[header, logo]], colWidths=[120 * mm, 50 * mm])
+            table.setStyle(TableStyle([('FONTNAME', (0, 0), (-1, -1), FONT), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+                                       ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+            elements.append(table)
+        else:
+            elements.extend(header)
         elements.append(Spacer(1, 30))
 
-    def _customer_block(self, elements, name, address, postal_code, city):
-        elements.append(self._p(name, bold=True))
-        if address:
-            elements.append(self._p(address))
-        if postal_code or city:
-            elements.append(self._p(f"{postal_code or ''} {city or ''}"))
-        elements.append(Spacer(1, 50))
+    def _customer_block(self, elements, buyer: dict):
+        elements.append(self._p(buyer.get("name"), bold=True))
+        if buyer.get("address"):
+            elements.append(self._p(buyer["address"]))
+        if buyer.get("postal_code") or buyer.get("city"):
+            elements.append(self._p(f"{buyer.get('postal_code') or ''} {buyer.get('city') or ''}"))
+        country = (buyer.get("country") or "DE").upper()
+        if country not in ("DE", "DEUTSCHLAND"):
+            elements.append(self._p(buyer.get("country")))
+        elements.append(Spacer(1, 40))
 
     @staticmethod
-    def _live_customer_fields(customer):
-        name = customer.company_name if customer.company_name else f"{customer.first_name or ''} {customer.last_name or ''}".strip()
-        return name, customer.address, customer.postal_code, customer.city
+    def _buyer_from_customer(customer) -> dict:
+        return {"name": customer.display_name, "address": customer.address, "postal_code": customer.postal_code,
+                "city": customer.city, "country": customer.country}
 
-    def _invoice_customer_fields(self, invoice):
-        # Finalized invoices use the recipient data frozen at finalization
-        if invoice.customer_name:
-            return invoice.customer_name, invoice.customer_address, invoice.customer_postal_code, invoice.customer_city
-        return self._live_customer_fields(invoice.customer)
-
-    def _bank_info(self, elements):
-        account_holder = self.db_controller.get_setting('account_holder', '')
-        bank_info = f"Bankverbindung: {self.db_controller.get_setting('bank_name', 'Musterbank')} | IBAN: {self.db_controller.get_setting('iban', 'DE12 3456 7890 1234 5678 90')} | BIC: {self.db_controller.get_setting('bic', 'MUSTERDEF1')}"
-        if account_holder:
-            bank_info += f" | Kontoinhaber: {account_holder}"
-        elements.append(self._p(bank_info))
+    def _bank_info(self, elements, seller: dict):
+        if not seller.get("iban"):
+            return
+        parts = [f"Bankverbindung: {seller.get('bank_name') or ''}".rstrip(), f"IBAN: {seller['iban']}"]
+        if seller.get("bic"):
+            parts.append(f"BIC: {seller['bic']}")
+        if seller.get("account_holder"):
+            parts.append(f"Kontoinhaber: {seller['account_holder']}")
+        elements.append(Spacer(1, 10))
+        elements.append(self._p(" | ".join(parts), 'Small'))
 
     def _items_table(self, items, net_amount, tax_amount, gross_amount, credit_amount=0.0, credit_desc=""):
         data = [['Pos.', 'Bezeichnung', 'Menge', 'Einzelpreis', 'MwSt.', 'Gesamtpreis']]
@@ -90,143 +156,156 @@ class PDFGenerator:
             if item.description:
                 title += f"<br/><font size=8>{escape(item.description)}</font>"
             if item.discount_percent:
-                title += f"<br/><font size=8>abzgl. {_fmt_number(item.discount_percent)} % Rabatt</font>"
+                title += f"<br/><font size=8>abzgl. {fmt_number(item.discount_percent)} % Rabatt</font>"
             data.append([
                 str(i),
                 Paragraph(title, self.styles['Cell']),
-                f"{_fmt_number(item.quantity)} {item.unit}",
-                _fmt_money(item.unit_price),
-                _fmt_rate(item.tax_percent),
-                _fmt_money(item.total_price)
+                f"{fmt_number(item.quantity)} {item.unit}",
+                fmt_money(item.unit_price),
+                format_rate(item.tax_percent),
+                fmt_money(item.total_price)
             ])
 
         item_rows = len(data)
-        data.append(['', '', '', '', 'Nettobetrag:', _fmt_money(net_amount)])
+        data.append(['', '', '', '', 'Nettobetrag:', fmt_money(net_amount)])
         if credit_amount:
             desc = credit_desc or 'Gutschrift'
             if len(desc) > 15: desc = desc[:12] + "..."
-            data.append(['', '', '', '', f"abzgl. {desc}:", _fmt_money(-credit_amount)])
+            data.append(['', '', '', '', f"abzgl. {desc}:", fmt_money(-credit_amount)])
 
-        # One VAT line per tax rate (required when several rates are used)
-        breakdown = tax_breakdown(items, credit_amount)
-        if len(breakdown) <= 1:
-            rate = next(iter(breakdown), 19.0)
-            data.append(['', '', '', '', f"MwSt. {_fmt_rate(rate)}:", _fmt_money(tax_amount)])
-        else:
-            for rate, (_, tax) in sorted(breakdown.items()):
-                data.append(['', '', '', '', f"MwSt. {_fmt_rate(rate)}:", _fmt_money(tax)])
-        data.append(['', '', '', '', 'Gesamtbetrag:', _fmt_money(gross_amount)])
+        # One VAT line per tax rate (§ 14 Abs. 4 Nr. 8 UStG)
+        for rate, (_, tax) in sorted(tax_breakdown(items, credit_amount).items(), reverse=True):
+            data.append(['', '', '', '', f"MwSt. {format_rate(rate)}:", fmt_money(tax)])
+        data.append(['', '', '', '', 'Gesamtbetrag:', fmt_money(gross_amount)])
 
-        table = Table(data, colWidths=[30, 170, 55, 70, 70, 75])
+        table = Table(data, colWidths=[12 * mm, 62 * mm, 22 * mm, 25 * mm, 25 * mm, 24 * mm], repeatRows=1)
         table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), FONT),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('ALIGN', (1, 1), (1, -1), 'LEFT'),
             ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, item_rows - 1), 1, colors.black),
-            ('LINEABOVE', (4, item_rows), (-1, -1), 1, colors.black),
-            ('FONTNAME', (4, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('GRID', (0, 0), (-1, item_rows - 1), 0.5, colors.black),
+            ('LINEABOVE', (4, item_rows), (-1, -1), 0.5, colors.black),
+            ('FONTNAME', (4, -1), (-1, -1), FONT_BOLD),
         ]))
         return table
 
-    def generate_invoice_pdf(self, invoice: Invoice, filepath: str):
-        doc = SimpleDocTemplate(filepath, pagesize=A4,
-                                rightMargin=60, leftMargin=60,
-                                topMargin=72, bottomMargin=18)
+    def render_invoice(self, invoice: Invoice) -> bytes:
+        buffer = BytesIO()
+        seller = self.db_controller.seller_of(invoice)
+        is_draft = self.db_controller.is_draft_number(invoice.invoice_number)
+        doc = self._doc(buffer, f"Rechnung {invoice.invoice_number}")
 
         elements = []
-        self._company_header(elements)
-        self._customer_block(elements, *self._invoice_customer_fields(invoice))
+        self._company_header(elements, seller)
+        self._customer_block(elements, self.db_controller.buyer_of(invoice))
 
-        # Invoice Header
-        is_draft = invoice.invoice_number.startswith(DRAFT_PREFIX)
         if is_draft:
             elements.append(self._p("ENTWURF – keine gültige Rechnung", 'Heading2', bold=True))
         elif invoice.cancels_invoice_id:
-            original = self.db_controller.get_invoice(invoice.cancels_invoice_id)
-            ref = f" zu Rechnung Nr. {original.invoice_number}" if original else ""
+            original = self.db_controller.get_invoice_header(invoice.cancels_invoice_id)
+            ref = f" zu Rechnung Nr. {original.invoice_number} vom {original.invoice_date.strftime('%d.%m.%Y')}" if original else ""
             elements.append(self._p(f"Stornorechnung Nr. {invoice.invoice_number}{ref}", 'Heading2', bold=True))
         else:
             elements.append(self._p(f"Rechnung Nr. {invoice.invoice_number}", 'Heading2', bold=True))
         elements.append(self._p(f"Rechnungsdatum: {invoice.invoice_date.strftime('%d.%m.%Y')}"))
         elements.append(self._p(f"Leistungsdatum: {invoice.delivery_date.strftime('%d.%m.%Y')}"))
-        if invoice.customer_vat_id:
-            elements.append(self._p(f"USt-IdNr. des Leistungsempfängers: {invoice.customer_vat_id}"))
-        elements.append(Spacer(1, 20))
+        buyer = self.db_controller.buyer_of(invoice)
+        if buyer.get("vat_id"):
+            elements.append(self._p(f"USt-IdNr. des Leistungsempfängers: {buyer['vat_id']}"))
+        if buyer.get("buyer_reference"):
+            elements.append(self._p(f"Ihre Referenz: {buyer['buyer_reference']}"))
+        elements.append(Spacer(1, 16))
 
         elements.append(self._items_table(
             invoice.items, invoice.net_amount, invoice.tax_amount, invoice.gross_amount,
             invoice.credit_amount or 0.0, invoice.credit_desc
         ))
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 16))
         if invoice.tax_exemption_reason:
             elements.append(self._p(f"Hinweis: {invoice.tax_exemption_reason}"))
-        elements.append(Spacer(1, 20))
+            elements.append(Spacer(1, 8))
 
         if invoice.cancels_invoice_id:
             elements.append(self._p("Mit dieser Stornorechnung wird die oben genannte Rechnung vollständig aufgehoben."))
         else:
-            payment_terms = self.db_controller.get_payment_terms()
-            elements.append(self._p(f"Bitte überweisen Sie den fälligen Betrag innerhalb von {payment_terms} Tagen ohne Abzug."))
+            due = self.db_controller.get_due_date(invoice)
+            terms = self.db_controller.payment_terms_of(invoice)
+            payment_text = self._p(f"Bitte überweisen Sie den Betrag innerhalb von {terms} Tagen ohne Abzug bis zum "
+                                   f"{due.strftime('%d.%m.%Y')} unter Angabe der Rechnungsnummer.")
+            qr = None if is_draft else girocode(seller, invoice.gross_amount, f"Rechnung {invoice.invoice_number}")
+            if qr:
+                block = Table([[payment_text, [qr, self._p("GiroCode", 'Small')]]], colWidths=[140 * mm, 30 * mm])
+                block.setStyle(TableStyle([('FONTNAME', (0, 0), (-1, -1), FONT), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                           ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
+                elements.append(block)
+            else:
+                elements.append(payment_text)
 
-        self._bank_info(elements)
+        self._bank_info(elements, seller)
         doc.build(elements)
+        return buffer.getvalue()
+
+    def generate_invoice_pdf(self, invoice: Invoice, filepath: str):
+        with open(filepath, "wb") as f:
+            f.write(self.render_invoice(invoice))
 
     def generate_quote_pdf(self, quote, filepath: str):
-        doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=60, leftMargin=60, topMargin=72, bottomMargin=18)
+        seller = self.db_controller.current_seller()
+        doc = self._doc(filepath, f"Angebot {quote.quote_number}")
         elements = []
-        self._company_header(elements)
-        self._customer_block(elements, *self._live_customer_fields(quote.customer))
+        self._company_header(elements, seller)
+        self._customer_block(elements, self._buyer_from_customer(self.db_controller.get_customer(quote.customer_id)))
 
         elements.append(self._p(f"Angebot Nr. {quote.quote_number}", 'Heading2', bold=True))
         elements.append(self._p(f"Angebotsdatum: {quote.quote_date.strftime('%d.%m.%Y')}"))
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 16))
 
         elements.append(self._items_table(quote.items, quote.net_amount, quote.tax_amount, quote.gross_amount))
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 16))
         if quote.tax_exemption_reason:
             elements.append(self._p(f"Hinweis: {quote.tax_exemption_reason}"))
-        elements.append(Spacer(1, 20))
+            elements.append(Spacer(1, 8))
         elements.append(self._p("Wir hoffen, dass Ihnen dieses Angebot zusagt und stehen für Rückfragen gerne zur Verfügung."))
         elements.append(self._p("Das Angebot ist 14 Tage gültig."))
 
         doc.build(elements)
 
     def generate_reminder_pdf(self, invoice: Invoice, filepath: str, level: int = 1):
-        doc = SimpleDocTemplate(filepath, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+        seller = self.db_controller.current_seller()
+        doc = self._doc(filepath, f"{level}. Mahnung {invoice.invoice_number}")
         elements = []
-        self._company_header(elements)
+        self._company_header(elements, seller)
         # Reminders go to the customer's current address
-        self._customer_block(elements, *self._live_customer_fields(invoice.customer))
+        self._customer_block(elements, self._buyer_from_customer(self.db_controller.get_customer(invoice.customer_id)))
 
         elements.append(self._p(f"{level}. Mahnung - Rechnung Nr. {invoice.invoice_number}", 'Heading2', bold=True))
         elements.append(self._p(f"Datum der Mahnung: {datetime.date.today().strftime('%d.%m.%Y')}"))
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 16))
 
         elements.append(self._p("Sehr geehrte Damen und Herren,"))
         elements.append(Spacer(1, 10))
 
-        inv_ref = f"Rechnung Nr. {invoice.invoice_number} vom {invoice.invoice_date.strftime('%d.%m.%Y')} über {_fmt_money(invoice.gross_amount)}"
+        inv_ref = f"Rechnung Nr. {invoice.invoice_number} vom {invoice.invoice_date.strftime('%d.%m.%Y')} über {fmt_money(invoice.gross_amount)}"
         if level == 1:
-            elements.append(self._p(f"leider konnten wir bis heute keinen Zahlungseingang für unsere {inv_ref} feststellen."))
-            elements.append(Spacer(1, 10))
-            elements.append(self._p("Wir bitten Sie, den fälligen Betrag umgehend, spätestens jedoch innerhalb der nächsten 14 Tage, auf unser unten stehendes Konto zu überweisen."))
+            texts = [f"leider konnten wir bis heute keinen Zahlungseingang für unsere {inv_ref} feststellen.",
+                     "Wir bitten Sie, den fälligen Betrag umgehend, spätestens jedoch innerhalb der nächsten 14 Tage, auf unser unten stehendes Konto zu überweisen."]
         elif level == 2:
-            elements.append(self._p(f"trotz unserer ersten Zahlungserinnerung konnten wir bisher noch keinen Zahlungseingang für unsere {inv_ref} feststellen."))
-            elements.append(Spacer(1, 10))
-            elements.append(self._p("Wir bitten Sie nun nachdrücklich, den ausstehenden Betrag innerhalb der nächsten 14 Tage zu begleichen."))
+            texts = [f"trotz unserer ersten Zahlungserinnerung konnten wir bisher noch keinen Zahlungseingang für unsere {inv_ref} feststellen.",
+                     "Wir bitten Sie nun nachdrücklich, den ausstehenden Betrag innerhalb der nächsten 14 Tage zu begleichen."]
         else:
-            elements.append(self._p(f"hiermit fordern wir Sie letztmalig auf, unsere {inv_ref} zu begleichen."))
+            texts = [f"hiermit fordern wir Sie letztmalig auf, unsere {inv_ref} zu begleichen.",
+                     "Sollte der Betrag nicht innerhalb von 14 Tagen auf unserem Konto eingehen, sehen wir uns gezwungen, rechtliche Schritte einzuleiten."]
+        texts.append("Sollte sich diese Zahlung mit diesem Schreiben gekreuzt haben, so betrachten Sie diese Mahnung bitte als gegenstandslos.")
+        for text in texts:
+            elements.append(self._p(text))
             elements.append(Spacer(1, 10))
-            elements.append(self._p("Sollte der Betrag nicht innerhalb von 14 Tagen auf unserem Konto eingehen, sehen wir uns gezwungen, rechtliche Schritte einzuleiten."))
 
-        elements.append(Spacer(1, 10))
-        elements.append(self._p("Sollte sich diese Zahlung mit diesem Schreiben gekreuzt haben, so betrachten Sie diese Mahnung bitte als gegenstandslos."))
-
-        self._bank_info(elements)
+        self._bank_info(elements, seller)
         doc.build(elements)

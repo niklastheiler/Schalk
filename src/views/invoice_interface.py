@@ -1,11 +1,114 @@
-from qfluentwidgets import ComboBox, InfoBar, InfoBarPosition, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel, TableWidget
-from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget
-from PySide6.QtCore import Qt
-from src.controllers.db_controller import DBController, GoBDError, DRAFT_PREFIX
-from src.utils import paths
+import logging
 import os
-from src.views.invoice_editor import InvoiceEditor
+import shutil
+from datetime import datetime
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFileDialog, QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import Action, ComboBox, FluentIcon as FIF, MessageBoxBase, RoundMenu, SubtitleLabel
+from src.controllers.db_controller import DBController, GoBDError
+from src.utils import paths
+from src.utils.invoice_documents import build_invoice_pdf, export_xrechnung
 from src.utils.signal_bus import SignalBus
+from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, Column, ListPage, confirm, fmt_date,
+                              fmt_money, notify_error, notify_success, show_message)
+from src.views.invoice_editor import InvoiceEditor
+
+logger = logging.getLogger(__name__)
+
+RIGHT = Qt.AlignRight | Qt.AlignVCenter
+
+
+def _naive(value):
+    return value.replace(tzinfo=None) if value else datetime.min
+
+
+def add_action(menu: RoundMenu, icon, text: str, slot):
+    action = Action(icon, text, menu)
+    action.triggered.connect(slot)
+    menu.addAction(action)
+
+
+class MonthDialog(MessageBoxBase):
+    def __init__(self, title: str, months: list, parent=None):
+        super().__init__(parent)
+        self.viewLayout.addWidget(SubtitleLabel(title, self))
+        self.monthCombo = ComboBox(self)
+        self.monthCombo.addItems(months)
+        self.viewLayout.addWidget(self.monthCombo)
+        self.widget.setMinimumWidth(350)
+
+
+class InvoiceListPage(ListPage):
+    def __init__(self, interface: "InvoiceInterface"):
+        self.interface = interface
+        c = interface.db_controller
+        self.c = c
+        columns = [
+            Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: _naive(i.invoice_date), width=100),
+            Column("Rechnungsnummer", self._number_text, width=180),
+            Column("Kunde", c.customer_display_name),
+            Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT),
+            Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i), width=110),
+            Column("Status", lambda i: i.status, width=120),
+        ]
+        super().__init__("Rechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
+                         date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)
+        self.add_header_button("DATEV Export", interface.show_datev_export_dialog)
+        self.add_header_button("Neue Rechnung", lambda: interface.show_editor(), primary=True)
+
+    def _number_text(self, invoice) -> str:
+        if self.c.is_draft_number(invoice.invoice_number):
+            return "Entwurf"
+        return invoice.invoice_number + (" (Storno)" if invoice.cancels_invoice_id else "")
+
+    def _due_text(self, invoice) -> str:
+        if not self.c.is_finalized(invoice) or invoice.cancels_invoice_id:
+            return ""
+        return fmt_date(self.c.get_due_date(invoice))
+
+    def _row_color(self, invoice):
+        if invoice.status == "Bezahlt":
+            return COLOR_GREEN
+        if invoice.status == "Storniert":
+            return COLOR_GREY
+        if invoice.status == "Überfällig":
+            return COLOR_RED
+        if invoice.status in ("Offen", "Teilbezahlt") and (self.c.get_due_date(invoice) - datetime.now()).days < 7:
+            return COLOR_YELLOW
+        return None
+
+    def records(self) -> list:
+        return self.c.get_invoices()
+
+    def on_activated(self, invoice):
+        self.interface.show_editor(invoice.id)
+
+    def fill_context_menu(self, menu: RoundMenu, invoice):
+        interface, c = self.interface, self.c
+        finalized = c.is_finalized(invoice)
+
+        add_action(menu, FIF.EDIT, "Anzeigen" if finalized else "Bearbeiten", lambda: interface.show_editor(invoice.id))
+        add_action(menu, FIF.VIEW, "PDF öffnen" if finalized else "Entwurf als PDF öffnen", lambda: interface.open_pdf(invoice.id))
+        add_action(menu, FIF.SAVE, "PDF speichern unter...", lambda: interface.save_pdf(invoice.id))
+        add_action(menu, FIF.PRINT, "Drucken", lambda: interface.print_pdf(invoice.id))
+        if finalized:
+            add_action(menu, FIF.CODE, "XRechnung (XML) exportieren...", lambda: interface.export_xrechnung(invoice.id))
+        if invoice.archived_at is None:
+            add_action(menu, FIF.FOLDER, "Archivieren", lambda: interface.archive(invoice.id))
+        if not finalized:
+            add_action(menu, FIF.DELETE, "Entwurf löschen", lambda: interface.delete(invoice.id))
+        elif invoice.status != "Storniert" and not invoice.cancels_invoice_id:
+            add_action(menu, FIF.CANCEL, "Stornieren", lambda: interface.change_status(invoice.id, "Storniert"))
+        add_action(menu, FIF.HISTORY, "Verlauf anzeigen", lambda: interface.show_history(invoice.id))
+
+        statuses = [s for s in c.allowed_invoice_statuses(invoice) if s != invoice.status]
+        if statuses and not invoice.cancels_invoice_id:
+            menu.addSeparator()
+            status_menu = RoundMenu("Status ändern", menu)
+            status_menu.setIcon(FIF.TAG)
+            for status in statuses:
+                add_action(status_menu, FIF.TAG, status, lambda checked=False, s=status: interface.change_status(invoice.id, s))
+            menu.addMenu(status_menu)
 
 
 class InvoiceInterface(QWidget):
@@ -13,589 +116,147 @@ class InvoiceInterface(QWidget):
         super().__init__(parent=parent)
         self.setObjectName("InvoiceInterface")
         self.db_controller = db_controller
-        
-        SignalBus.get().dataChanged.connect(self.mark_dirty)
-        
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
-        
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.stackedWidget = QStackedWidget(self)
-        self.vBoxLayout.addWidget(self.stackedWidget)
-        
-        # View 1: List
-        self.list_view = QWidget()
-        self.init_list_view()
-        self.stackedWidget.addWidget(self.list_view)
-        
-        # View 2: Editor
-        self.editor_view = InvoiceEditor(self.db_controller)
-        self.editor_view.saved.connect(self.on_invoice_saved)
-        self.editor_view.canceled.connect(lambda: self.show_list_view(reload=False))
-        self.stackedWidget.addWidget(self.editor_view)
-        
-        self.show_list_view()
-        SignalBus.get().invoiceAdded.connect(self.insert_row)
-        SignalBus.get().invoiceUpdated.connect(self.update_row)
-        SignalBus.get().invoiceDeleted.connect(self.remove_row)
+        layout.addWidget(self.stackedWidget)
 
-    def init_list_view(self):
-        layout = QVBoxLayout(self.list_view)
-        layout.setContentsMargins(24, 24, 24, 24)
-        
-        # Header
-        headerLayout = QHBoxLayout()
-        self.titleLabel = SubtitleLabel("Rechnungen", self.list_view)
-        
-        self.searchLineEdit = SearchLineEdit(self.list_view)
-        self.searchLineEdit.setPlaceholderText("Suchen...")
-        self.searchLineEdit.setFixedWidth(200)
-        self.searchLineEdit.textChanged.connect(self.filter_table)
-        
-        self.yearFilterCombo = ComboBox(self.list_view)
-        self.yearFilterCombo.addItem("Alle Jahre")
-        self.yearFilterCombo.setFixedWidth(130)
-        self.yearFilterCombo.currentTextChanged.connect(self.filter_table)
-        
-        self.monthFilterCombo = ComboBox(self.list_view)
-        self.monthFilterCombo.addItem("Alle Monate")
-        self.monthFilterCombo.setFixedWidth(130)
-        self.monthFilterCombo.currentTextChanged.connect(self.filter_table)
-        
-        self.datevExportBtn = PushButton("DATEV Export", self.list_view)
-        self.datevExportBtn.clicked.connect(self.show_datev_export_dialog)
-        
-        self.newInvoiceBtn = PrimaryPushButton("Neue Rechnung", self.list_view)
-        self.newInvoiceBtn.clicked.connect(self.show_editor_view)
-        
-        headerLayout.addWidget(self.titleLabel)
-        headerLayout.addStretch(1)
-        headerLayout.addWidget(self.yearFilterCombo)
-        headerLayout.addWidget(self.monthFilterCombo)
-        headerLayout.addWidget(self.searchLineEdit)
-        headerLayout.addWidget(self.datevExportBtn)
-        headerLayout.addWidget(self.newInvoiceBtn)
-        
-        layout.addLayout(headerLayout)
-        
-        # Table
-        self.table = TableWidget(self.list_view)
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(['Datum', 'Rechnungsnummer', 'Kunde', 'Betrag', 'Zahlungsziel', 'Status'])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.table.setColumnWidth(0, 100)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
-        self.table.setColumnWidth(1, 150)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
-        self.table.setColumnWidth(3, 120)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
-        self.table.setColumnWidth(4, 150)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Interactive)
-        self.table.setColumnWidth(5, 160)
+        self.list_page = InvoiceListPage(self)
+        self.editor = InvoiceEditor(db_controller)
+        self.editor.saved.connect(self._on_saved)
+        self.editor.canceled.connect(self.show_list)
+        self.stackedWidget.addWidget(self.list_page)
+        self.stackedWidget.addWidget(self.editor)
 
-        
-        # Performance optimization for scrolling with setCellWidget
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(45)
-        from PySide6.QtWidgets import QAbstractItemView
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.table.itemDoubleClicked.connect(self.on_item_double_clicked)
-        
-        layout.addWidget(self.table)
-        
-        self.load_data()
+    # --- Navigation ---
+    def show_list(self):
+        self.stackedWidget.setCurrentWidget(self.list_page)
 
-    def mark_dirty(self):
-        self._needs_reload = True
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if getattr(self, '_needs_reload', True):
-            self.load_data()
-            self._needs_reload = False
-
-    def show_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item: return
-        row = item.row()
-        inv_id_item = self.table.item(row, 0)
-        if not inv_id_item: return
-        inv_id = inv_id_item.data(Qt.UserRole)
-        
-        inv = self.db_controller.get_invoice(inv_id)
-        if not inv: return
-
-        from qfluentwidgets import RoundMenu, Action
-        from qfluentwidgets import FluentIcon as FIF
-        menu = RoundMenu(parent=self.table)
-        finalized = self.db_controller.is_finalized(inv)
-        
-        edit_action = Action(FIF.EDIT, "Anzeigen" if finalized else "Bearbeiten", self)
-        edit_action.triggered.connect(lambda: self.show_editor_view(inv_id))
-        menu.addAction(edit_action)
-        
-        pdf_action = Action(FIF.DOCUMENT, "PDF erstellen" if finalized else "Entwurf als PDF", self)
-        pdf_action.triggered.connect(lambda: self.generate_pdf_for_invoice(inv_id))
-        menu.addAction(pdf_action)
-        
-        print_action = Action(FIF.PRINT, "Drucken", self)
-        print_action.triggered.connect(lambda: self.generate_pdf_for_invoice(inv_id, print_only=True))
-        menu.addAction(print_action)
-        
-        if inv.archived_at is None:
-            archive_action = Action(FIF.FOLDER, "Archivieren", self)
-            archive_action.triggered.connect(lambda: self.archive_invoice(inv_id))
-            menu.addAction(archive_action)
-            
-        if not finalized:
-            delete_action = Action(FIF.DELETE, "Entwurf löschen", self)
-            delete_action.triggered.connect(lambda: self.delete_invoice(inv_id))
-            menu.addAction(delete_action)
-        elif inv.status != "Storniert":
-            storno_action = Action(FIF.CANCEL, "Stornieren", self)
-            storno_action.triggered.connect(lambda: self.change_invoice_status(inv_id, "Storniert"))
-            menu.addAction(storno_action)
-            
-        history_action = Action(FIF.HISTORY, "Verlauf anzeigen", self)
-        history_action.triggered.connect(lambda: self.show_history(inv_id))
-        menu.addAction(history_action)
-            
-        menu.addSeparator()
-        
-        # Status Menu
-        status_menu = RoundMenu("Status ändern", self)
-        status_menu.setIcon(FIF.TAG)
-        
-        for status_text in self.db_controller.allowed_invoice_statuses(inv):
-            if status_text != inv.status:
-                action = Action(status_text, self)
-                action.triggered.connect(lambda checked=False, st=status_text: self.change_invoice_status(inv_id, st))
-                status_menu.addAction(action)
-                
-        if status_menu.actions():
-            menu.addMenu(status_menu)
-            
-        menu.exec(self.table.viewport().mapToGlobal(pos))
-
-    def on_item_double_clicked(self, item):
-        row = item.row()
-        inv_id_item = self.table.item(row, 0)
-        if not inv_id_item: return
-        inv_id = inv_id_item.data(Qt.UserRole)
-        self.show_editor_view(inv_id)
-
-    def filter_table(self):
-        search_text = self.searchLineEdit.text().lower()
-        year_filter = self.yearFilterCombo.currentText()
-        month_filter = self.monthFilterCombo.currentText()
-        
-        for i in range(self.table.rowCount()):
-            date_item = self.table.item(i, 0)
-            if not date_item:
-                continue
-                
-            date_text = date_item.text()
-            row_month = date_text[3:5] if len(date_text) >= 10 else ""
-            row_year = date_text[6:10] if len(date_text) >= 10 else ""
-            
-            match_year = (year_filter == "Alle Jahre" or row_year == year_filter)
-            match_month = (month_filter == "Alle Monate" or row_month == month_filter)
-            match_search = False
-            
-            if not search_text:
-                match_search = True
-            else:
-                # search in columns 1, 2, 3
-                for col in range(1, 4):
-                    item = self.table.item(i, col)
-                    if item and search_text in item.text().lower():
-                        match_search = True
-                        break
-                        
-            self.table.setRowHidden(i, not (match_year and match_month and match_search))
-
-    def load_data(self):
-
-        self.table.setRowCount(0)
-        invoices = self.db_controller.get_invoices()
-        
-        available_years = set()
-        available_months = set()
-        for inv in invoices:
-            if inv.invoice_date:
-                available_years.add(inv.invoice_date.strftime("%Y"))
-                available_months.add(inv.invoice_date.strftime("%m"))
-                
-        current_year = self.yearFilterCombo.currentText()
-        self.yearFilterCombo.blockSignals(True)
-        self.yearFilterCombo.clear()
-        self.yearFilterCombo.addItem("Alle Jahre")
-        for y in sorted(list(available_years), reverse=True):
-            self.yearFilterCombo.addItem(y)
-        if current_year in available_years or current_year == "Alle Jahre":
-            self.yearFilterCombo.setCurrentText(current_year)
-        self.yearFilterCombo.blockSignals(False)
-
-        current_month = self.monthFilterCombo.currentText()
-        self.monthFilterCombo.blockSignals(True)
-        self.monthFilterCombo.clear()
-        self.monthFilterCombo.addItem("Alle Monate")
-        for m in sorted(list(available_months)):
-            self.monthFilterCombo.addItem(m)
-        if current_month in available_months or current_month == "Alle Monate":
-            self.monthFilterCombo.setCurrentText(current_month)
-        self.monthFilterCombo.blockSignals(False)
-        
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        
-        payment_terms = self.db_controller.get_payment_terms()
-            
-        for i, inv in enumerate(invoices):
-            self._update_or_insert_row(i, inv, now, payment_terms, is_new=True)
-            
-        self.filter_table()
-
-
-    def _update_or_insert_row(self, i, inv, now, payment_terms, is_new=False):
-        from datetime import timedelta
-        from PySide6.QtGui import QBrush, QColor
-        if is_new:
-            self.table.insertRow(i)
-        due_date = inv.invoice_date.replace(tzinfo=None) + timedelta(days=payment_terms)
-        
-        row_color = None
-        if inv.status == "Bezahlt":
-            row_color = "#D3EBCD" # Green
-        elif inv.status == "Storniert":
-            row_color = "#E6E6E6" # Grey
-        elif inv.status == "Überfällig" or (inv.status in ["Offen", "Teilbezahlt"] and now > due_date):
-            row_color = "#FFD6D6" # Red
-        elif inv.status in ["Offen", "Teilbezahlt"] and (due_date - now).days < 7:
-            row_color = "#FFF5C2" # Yellow: due within a week
-        
-        def create_item(text):
-            item = QTableWidgetItem(text)
-            item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-            if row_color:
-                item.setBackground(QBrush(QColor(row_color)))
-            return item
-
-        first_item = create_item(inv.invoice_date.strftime("%d.%m.%Y"))
-        first_item.setData(Qt.UserRole, inv.id)
-        self.table.setItem(i, 0, first_item)
-        number = "Entwurf" if inv.invoice_number.startswith(DRAFT_PREFIX) else inv.invoice_number
-        if inv.cancels_invoice_id:
-            number += " (Storno)"
-        self.table.setItem(i, 1, create_item(number))
-        if inv.customer_name:
-            customer_name = inv.customer_name
+    def show_editor(self, invoice_id=None):
+        if invoice_id:
+            self.editor.load_invoice(invoice_id)
         else:
-            customer_name = inv.customer.company_name if inv.customer.company_name else f"{inv.customer.first_name} {inv.customer.last_name}"
-        self.table.setItem(i, 2, create_item(customer_name))
-        self.table.setItem(i, 3, create_item(f"{inv.gross_amount:.2f} €"))
-        self.table.setItem(i, 4, create_item(due_date.strftime("%d.%m.%Y")))
-        
-        status_combo = ComboBox()
-        allowed = self.db_controller.allowed_invoice_statuses(inv)
-        status_combo.addItems(allowed if inv.status in allowed else allowed + [inv.status])
-        status_combo.setCurrentText(inv.status)
-        status_combo.setEnabled(inv.status != "Storniert")
-        
-        status_combo.currentTextChanged.connect(lambda text, inv_id=inv.id: self.change_invoice_status(inv_id, text))
-        
-        # Avoid focus issues and scrolling bugs by setting focus policy
-        status_combo.setFocusPolicy(Qt.ClickFocus)
-        status_combo.setFixedSize(130, 32)
-        from PySide6.QtWidgets import QWidget, QHBoxLayout
-        container = QWidget()
-        container.setStyleSheet("background-color: transparent;")
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 20, 0)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.addWidget(status_combo)
-        self.table.setCellWidget(i, 5, container)
+            self.editor.clear_form()
+        self.stackedWidget.setCurrentWidget(self.editor)
 
-    def show_datev_export_dialog(self):
-        from src.models.database import Invoice
-        from src.utils.datev_generator import DatevGenerator
-        import os
-        from datetime import datetime
-        
-        # Determine available months from invoices
-        available_months = set()
-        with self.db_controller.get_session() as session:
-            invoices = session.query(Invoice).filter(
-                Invoice.archived_at != None,
-                Invoice.status.in_(["Bezahlt", "Storniert"])
-            ).all()
-            for inv in invoices:
-                # Format: YYYY-MM
-                available_months.add(f"{inv.invoice_date.year}-{inv.invoice_date.month:02d}")
-                
-        if not available_months:
-            from qfluentwidgets import InfoBar
-            InfoBar.warning("Keine Daten", "Es gibt keine archivierten bezahlten oder stornierten Rechnungen zum Exportieren.", parent=self)
-            return
-            
-        months_list = sorted(list(available_months), reverse=True)
-        
-        from qfluentwidgets import MessageBoxBase, SubtitleLabel, ComboBox
-        class DatevDialog(MessageBoxBase):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.titleLabel = SubtitleLabel('DATEV Monats-Export', self)
-                self.viewLayout.addWidget(self.titleLabel)
-                self.monthCombo = ComboBox(self)
-                self.monthCombo.addItems(months_list)
-                self.viewLayout.addWidget(self.monthCombo)
-                self.widget.setMinimumWidth(350)
-                
-        dialog = DatevDialog(self)
-        if dialog.exec():
-            selected = dialog.monthCombo.currentText()
-            year, month = map(int, selected.split('-'))
-            
-            with self.db_controller.get_session() as session:
-                from sqlalchemy import extract
-                # We do simple Python filter since SQLite extract might be tricky
-                all_invs = session.query(Invoice).filter(
-                    Invoice.archived_at != None,
-                    Invoice.status.in_(["Bezahlt", "Storniert"])
-                ).all()
-                
-                export_invs = [inv for inv in all_invs if inv.invoice_date.year == year and inv.invoice_date.month == month]
-                
-                if not export_invs:
-                    return
-                    
-                filename = f"DATEV_Export_Rechnungen_{year}_{month:02d}.zip"
-                filepath = paths.desktop_path(filename)
-                
-                generator = DatevGenerator(self.db_controller)
-                if generator.generate_export(export_invs, filepath, month, year):
-                    # Record history for each
-                    from src.models.database import DocumentHistory
-                    for inv in export_invs:
-                        h = DocumentHistory(document_type="Invoice", document_id=inv.id, user="System", action="DATEV Export")
-                        session.add(h)
-                    session.commit()
-                    self.db_controller.db.save()
-                    
-                    from qfluentwidgets import InfoBar
-                    InfoBar.success(
-                        title="DATEV Export erfolgreich",
-                        content=f"Das DATEV ZIP-Archiv für {month:02d}/{year} ({len(export_invs)} Rechnungen) wurde auf dem Desktop gespeichert:\n{filename}",
-                        parent=self,
-                        duration=5000
-                    )
-                else:
-                    from qfluentwidgets import InfoBar
-                    InfoBar.error(
-                        title="Fehler beim DATEV Export",
-                        content="Die Export-Datei konnte nicht generiert werden.",
-                        parent=self,
-                        duration=4000
-                    )
+    def _on_saved(self, invoice_id):
+        notify_success(self, "Gespeichert", "Rechnung wurde gespeichert.")
+        self.show_list()
 
-    def generate_pdf_for_invoice(self, invoice_id, print_only=False):
-        from src.utils.invoice_documents import build_invoice_pdf
-        import shutil
-        import tempfile
-        
+    # --- Documents ---
+    def _pdf_path(self, invoice_id):
         invoice = self.db_controller.get_invoice(invoice_id)
-        if not invoice:
+        try:
+            return invoice, build_invoice_pdf(self.db_controller, invoice)
+        except GoBDError as e:
+            notify_error(self, "GoBD-Prüfung fehlgeschlagen", str(e), duration=10000)
+        except Exception as e:
+            logger.exception("PDF der Rechnung %s konnte nicht erstellt werden", invoice_id)
+            notify_error(self, "PDF konnte nicht erstellt werden", f"{e}\nDetails: {paths.LOG_PATH}")
+        return invoice, None
+
+    def open_pdf(self, invoice_id):
+        _, path = self._pdf_path(invoice_id)
+        if path:
+            os.startfile(path)
+
+    def print_pdf(self, invoice_id):
+        _, path = self._pdf_path(invoice_id)
+        if path:
+            os.startfile(path, "print")
+
+    def save_pdf(self, invoice_id):
+        invoice, path = self._pdf_path(invoice_id)
+        if not path:
+            return
+        name = "Entwurf" if self.db_controller.is_draft_number(invoice.invoice_number) else invoice.invoice_number
+        target, _ = QFileDialog.getSaveFileName(self, "PDF speichern unter", paths.desktop_path(f"Rechnung_{name}.pdf"), "PDF (*.pdf)")
+        if target:
+            shutil.copyfile(path, target)
+            notify_success(self, "PDF gespeichert", target)
+
+    def export_xrechnung(self, invoice_id):
+        invoice = self.db_controller.get_invoice(invoice_id)
+        target, _ = QFileDialog.getSaveFileName(self, "XRechnung speichern unter", paths.desktop_path(f"XRechnung_{invoice.invoice_number}.xml"), "XML (*.xml)")
+        if not target:
             return
         try:
-            # Finalized invoices are archived once and always reproduced from the archive (GoBD)
-            source_pdf, is_e_invoice = build_invoice_pdf(self.db_controller, invoice)
-            
-            if print_only:
-                os.startfile(source_pdf, "print")
-                return
-                
-            filename = f"Rechnung_{invoice.invoice_number}.pdf"
-            final_pdf_path = paths.desktop_path(filename)
-            shutil.copyfile(source_pdf, final_pdf_path)
-            if not self.db_controller.is_finalized(invoice):
-                title, content = "Entwurf erstellt", f"Die Vorschau des Entwurfs wurde gespeichert (keine gültige Rechnung):\n{final_pdf_path}"
-            elif is_e_invoice:
-                title, content = "E-Rechnung Erstellt", f"Die Rechnung wurde inkl. ZUGFeRD/XRechnung-Daten als PDF gespeichert:\n{final_pdf_path}"
-            else:
-                title, content = "Rechnung Erstellt", f"Die Rechnung wurde als Standard-PDF gespeichert (Keine Positionen für ZUGFeRD):\n{final_pdf_path}"
-            InfoBar.success(
-                title=title,
-                content=content,
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=5000,
-                parent=self.window()
-            )
+            export_xrechnung(self.db_controller, invoice, target)
         except GoBDError as e:
-            InfoBar.error("GoBD-Prüfung fehlgeschlagen", str(e), orient=Qt.Horizontal, isClosable=True,
-                          position=InfoBarPosition.TOP, duration=10000, parent=self.window())
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            
-            # Log to error.log
-            with open(paths.ERROR_LOG, "a", encoding="utf-8") as f:
-                f.write(traceback.format_exc() + "\n")
-                
-            InfoBar.error(
-                title="Fehler bei E-Rechnung",
-                content="Ein interner Fehler trat auf (siehe error.log oder Konsole).",
-                orient=Qt.Horizontal,
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=10000,
-                parent=self.window()
-            )
+            show_message(self, "XRechnung nicht möglich", str(e))
+            return
+        self.db_controller.log_actions("Invoice", [invoice_id], "XRechnung exportiert")
+        notify_success(self, "XRechnung exportiert", target)
+
+    # --- Actions ---
+    def archive(self, invoice_id):
+        invoice = self.db_controller.get_invoice(invoice_id)
+        if not self.db_controller.is_finalized(invoice) and not confirm(
+                self, "Rechnung festschreiben",
+                "Beim Archivieren wird die Rechnung festgeschrieben und erhält ihre endgültige Rechnungsnummer. "
+                "Danach ist sie nicht mehr änderbar.\n\nFortfahren?"):
+            return
+        success, message = self.db_controller.archive_invoice(invoice_id)
+        if success:
+            notify_success(self, "Archiviert", "Rechnung wurde archiviert.")
+        else:
+            show_message(self, "Nicht archiviert", message)
+
+    def change_status(self, invoice_id, new_status):
+        invoice = self.db_controller.get_invoice(invoice_id)
+        if not invoice or invoice.status == new_status:
+            return
+        if new_status == "Storniert":
+            question = (f"Für Rechnung {invoice.invoice_number} wird eine Stornorechnung mit negativen Beträgen erstellt. "
+                        "Dies kann nicht rückgängig gemacht werden.\n\nFortfahren?")
+            if not confirm(self, "Rechnung stornieren", question):
+                return
+        elif not self.db_controller.is_finalized(invoice):
+            question = ("Die Rechnung wird festgeschrieben und erhält ihre endgültige Rechnungsnummer. "
+                        "Danach ist sie nicht mehr änderbar (nur noch Storno möglich).\n\nFortfahren?")
+            if not confirm(self, "Rechnung festschreiben", question):
+                return
+        success, message = self.db_controller.update_invoice_status(invoice_id, new_status)
+        if not success:
+            show_message(self, "Nicht möglich", message)
+        elif message:
+            notify_success(self, "Status geändert", message, duration=5000)
+
+    def delete(self, invoice_id):
+        if not confirm(self, "Entwurf löschen", "Möchten Sie diesen Rechnungsentwurf wirklich löschen?"):
+            return
+        try:
+            self.db_controller.delete_invoice(invoice_id)
+        except GoBDError as e:
+            notify_error(self, "Nicht erlaubt", str(e))
+            return
+        notify_success(self, "Gelöscht", "Der Entwurf wurde gelöscht.")
 
     def show_history(self, invoice_id):
-        from qfluentwidgets import MessageBox
         entries = self.db_controller.get_document_history("Invoice", invoice_id)
         lines = [f"{h.timestamp.strftime('%d.%m.%Y %H:%M')} UTC – {h.user}: {h.action}" for h in entries]
-        box = MessageBox("Verlauf", "\n".join(lines) or "Kein Verlauf vorhanden.", self.window())
-        box.cancelButton.hide()
-        box.exec()
+        show_message(self, "Verlauf", "\n".join(lines) or "Kein Verlauf vorhanden.")
 
-    def show_list_view(self, reload=True):
-        self.stackedWidget.setCurrentIndex(0)
-        if reload:
-            self.load_data()
-
-    def show_editor_view(self, invoice_id=None):
-        if invoice_id:
-            self.editor_view.load_invoice(invoice_id)
+    def show_datev_export_dialog(self):
+        from src.utils.datev_generator import DatevGenerator
+        exportable = [i for i in self.db_controller.get_invoices() if i.archived_at and i.status in ("Bezahlt", "Storniert")]
+        months = sorted({i.invoice_date.strftime("%Y-%m") for i in exportable}, reverse=True)
+        if not months:
+            notify_error(self, "Keine Daten", "Es gibt keine archivierten bezahlten oder stornierten Rechnungen zum Exportieren.")
+            return
+        dialog = MonthDialog("DATEV Monats-Export (Belege)", months, self.window())
+        if not dialog.exec():
+            return
+        selected = dialog.monthCombo.currentText()
+        invoices = [i for i in exportable if i.invoice_date.strftime("%Y-%m") == selected]
+        year, month = map(int, selected.split('-'))
+        filename = f"DATEV_Export_Rechnungen_{year}_{month:02d}.zip"
+        target, _ = QFileDialog.getSaveFileName(self, "DATEV-Export speichern", paths.desktop_path(filename), "ZIP (*.zip)")
+        if not target:
+            return
+        if DatevGenerator(self.db_controller).generate_export(invoices, target):
+            self.db_controller.log_actions("Invoice", [i.id for i in invoices], "DATEV Export")
+            notify_success(self, "DATEV Export erfolgreich", f"{len(invoices)} Rechnungen exportiert:\n{target}", duration=5000)
         else:
-            self.editor_view.clear_form()
-        self.stackedWidget.setCurrentIndex(1)
-        
-    def _confirm(self, title, text) -> bool:
-        from qfluentwidgets import MessageBox
-        box = MessageBox(title, text, self.window())
-        box.yesButton.setText("Ja")
-        box.cancelButton.setText("Nein")
-        return bool(box.exec())
-
-    def archive_invoice(self, invoice_id):
-        inv = self.db_controller.get_invoice(invoice_id)
-        if inv and not self.db_controller.is_finalized(inv):
-            if not self._confirm("Rechnung festschreiben", "Beim Archivieren wird die Rechnung festgeschrieben und erhält ihre endgültige Rechnungsnummer. Danach ist sie nicht mehr änderbar.\n\nFortfahren?"):
-                return
-        if self.db_controller.archive_invoice(invoice_id):
-            InfoBar.success("Archiviert", "Rechnung wurde archiviert.", position=InfoBarPosition.TOP, parent=self.window())
-            self.load_data()
-            
-    def change_invoice_status(self, invoice_id, new_status):
-        from PySide6.QtCore import QTimer
-        if not new_status:
-            return
-        inv = self.db_controller.get_invoice(invoice_id)
-        if not inv or inv.status == new_status:
-            return
-        
-        confirmed = True
-        if new_status == "Storniert":
-            confirmed = self._confirm("Rechnung stornieren", f"Für Rechnung {inv.invoice_number} wird eine Stornorechnung mit negativen Beträgen erstellt. Dies kann nicht rückgängig gemacht werden.\n\nFortfahren?")
-        elif not self.db_controller.is_finalized(inv) and new_status != "Entwurf":
-            confirmed = self._confirm("Rechnung festschreiben", "Die Rechnung wird festgeschrieben und erhält ihre endgültige Rechnungsnummer. Danach ist sie nicht mehr änderbar (nur noch Storno möglich).\n\nFortfahren?")
-            
-        if confirmed:
-            success, message = self.db_controller.update_invoice_status(invoice_id, new_status)
-            if not success:
-                InfoBar.error("Nicht erlaubt", message, position=InfoBarPosition.TOP, duration=6000, parent=self.window())
-            elif message:
-                InfoBar.success("Status geändert", message, position=InfoBarPosition.TOP, duration=5000, parent=self.window())
-        # Deferred: the combo box that triggered this is replaced while reloading
-        QTimer.singleShot(0, self.load_data)
-            
-    def delete_invoice(self, invoice_id):
-        from PySide6.QtWidgets import QMessageBox
-        msgBox = QMessageBox(self)
-        msgBox.setIcon(QMessageBox.Warning)
-        msgBox.setWindowTitle("Entwurf löschen")
-        msgBox.setText("Möchten Sie diesen Rechnungsentwurf wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.")
-        msgBox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msgBox.button(QMessageBox.Yes).setText("Ja")
-        msgBox.button(QMessageBox.No).setText("Nein")
-        msgBox.setDefaultButton(QMessageBox.No)
-        
-        if msgBox.exec() == QMessageBox.Yes:
-            try:
-                success = self.db_controller.delete_invoice(invoice_id)
-            except GoBDError as e:
-                InfoBar.error("Nicht erlaubt", str(e), position=InfoBarPosition.TOP, duration=6000, parent=self.window())
-                return
-            if success:
-                # Find and remove row instantly for performance
-                for row in range(self.table.rowCount()):
-                    item = self.table.item(row, 0)
-                    if item and item.data(Qt.UserRole) == invoice_id:
-                        self.table.removeRow(row)
-                        break
-                InfoBar.success("Gelöscht", "Der Entwurf wurde gelöscht.", position=InfoBarPosition.TOP, parent=self.window())
-            else:
-                InfoBar.error("Fehler", "Die Rechnung konnte nicht gelöscht werden.", position=InfoBarPosition.TOP, parent=self.window())
-        
-    def on_invoice_saved(self, invoice_id):
-        InfoBar.success(
-            title="Erfolgreich",
-            content="Rechnung wurde gespeichert.",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window()
-        )
-        self.show_list_view(reload=False)
-        
-        found = False
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == invoice_id:
-                self.update_row(invoice_id)
-                found = True
-                break
-                
-        if not found:
-            self.insert_row(invoice_id)
-
-
-    def insert_row(self, invoice_id):
-        from datetime import datetime
-        invoice = self.db_controller.get_invoice(invoice_id)
-        if not invoice: return
-        now = datetime.now()
-        payment_terms = self.db_controller.get_payment_terms()
-        
-        # Insert at the top
-        self._update_or_insert_row(0, invoice, now, payment_terms, is_new=True)
-
-    def update_row(self, invoice_id):
-        from datetime import datetime
-        invoice = self.db_controller.get_invoice(invoice_id)
-        if not invoice: return
-        now = datetime.now()
-        payment_terms = self.db_controller.get_payment_terms()
-        
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == invoice_id:
-                # To prevent memory leaks with QFluentWidgets, we first clear the row cell widgets
-                self.table.removeCellWidget(row, 5)
-                self._update_or_insert_row(row, invoice, now, payment_terms, is_new=False)
-                break
-
-    def remove_row(self, invoice_id):
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == invoice_id:
-                self.table.removeRow(row)
-                break
+            notify_error(self, "Fehler beim DATEV Export", f"Die Export-Datei konnte nicht erstellt werden. Details: {paths.LOG_PATH}")

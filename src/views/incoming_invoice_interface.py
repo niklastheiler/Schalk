@@ -1,367 +1,211 @@
+import logging
 import os
 import re
 from datetime import datetime
+from PySide6.QtCore import QDate
+from PySide6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QTextBrowser, QVBoxLayout
 from pypdf import PdfReader
-from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QHeaderView, QFileDialog, QTableWidgetItem
-from PySide6.QtCore import Qt
-from qfluentwidgets import (SubtitleLabel, PrimaryPushButton, TableWidget, InfoBar, 
-                            InfoBarPosition, PushButton, MessageBoxBase, LineEdit, BodyLabel, DatePicker, DoubleSpinBox, ComboBox, SearchLineEdit)
+from qfluentwidgets import (BodyLabel, DatePicker, DoubleSpinBox, FluentIcon as FIF, LineEdit, MessageBoxBase,
+                            PushButton, RoundMenu, SubtitleLabel)
+from src.controllers.db_controller import DBController
+from src.utils import paths
+from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
 from src.utils.signal_bus import SignalBus
+from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.invoice_interface import RIGHT, add_action
+
+logger = logging.getLogger(__name__)
+
+_AMOUNT_RE = re.compile(r'(?:Gesamtbetrag|Rechnungsbetrag|Endbetrag|Zahlbetrag|Summe|Total|Betrag)[\s\S]{0,30}?(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d+[.,]\d{2})', re.IGNORECASE)
+_DATE_RE = re.compile(r'(?:Rechnungsdatum|Datum|Leistungsdatum|Lieferdatum)[\s\S]{0,30}?(\d{2}\.\d{2}\.\d{4})', re.IGNORECASE)
+
+
+def guess_from_pdf_text(path: str):
+    """Fallback for PDFs without structured data: amount and date from the text layer."""
+    amount, date_obj = 0.0, datetime.now().date()
+    try:
+        text = "\n".join((page.extract_text() or "") for page in PdfReader(path).pages[:3])
+        match = _AMOUNT_RE.search(text)
+        if match:
+            # The last separator is the decimal separator: 1.234,56 (DE) or 1,234.56 (EN)
+            value = match.group(1)
+            dec_pos = max(value.rfind(','), value.rfind('.'))
+            amount = float(re.sub(r'[.,]', '', value[:dec_pos]) + '.' + value[dec_pos + 1:])
+        match = _DATE_RE.search(text)
+        if match:
+            date_obj = datetime.strptime(match.group(1), '%d.%m.%Y').date()
+    except Exception:
+        logger.info("Text der PDF %s konnte nicht ausgewertet werden", path, exc_info=True)
+    return amount, date_obj
+
 
 class IncomingInvoiceDialog(MessageBoxBase):
-    def __init__(self, parent, default_amount=0.0, default_date=None, default_desc=""):
+    def __init__(self, parent, amount: float, date_obj, description: str, einvoice: EInvoiceData = None):
         super().__init__(parent)
-        self.titleLabel = SubtitleLabel('Rechnungsdaten bestätigen', self)
-        
-        # UI components
-        self.descLabel = BodyLabel("Beschreibung / Dateiname", self)
-        self.descEdit = LineEdit(self)
-        self.descEdit.setText(default_desc)
-        
-        self.dateLabel = BodyLabel("Datum", self)
+        self.viewLayout.addWidget(SubtitleLabel('Rechnungsdaten bestätigen', self))
+        if einvoice:
+            info = BodyLabel(f"E-Rechnung erkannt ({einvoice.format}): Die Daten wurden aus den strukturierten Rechnungsdaten übernommen.", self)
+            info.setWordWrap(True)
+            self.viewLayout.addWidget(info)
+        self.supplierEdit = self._field("Lieferant", LineEdit(self), einvoice.seller_name if einvoice else "")
+        self.numberEdit = self._field("Rechnungsnummer", LineEdit(self), einvoice.number if einvoice else "")
+        self.descEdit = self._field("Beschreibung", LineEdit(self), description)
         self.datePicker = DatePicker(self)
-        from PySide6.QtCore import QDate
-        if default_date:
-            self.datePicker.setDate(QDate(default_date.year, default_date.month, default_date.day))
-            
-        self.amountLabel = BodyLabel("Betrag (€)", self)
+        self.datePicker.setDate(QDate(date_obj.year, date_obj.month, date_obj.day))
+        self._field("Rechnungsdatum", self.datePicker)
         self.amountSpin = DoubleSpinBox(self)
-        self.amountSpin.setRange(0.0, 999999.99)
-        self.amountSpin.setValue(default_amount)
-        
-        # Add to layout
-        self.viewLayout.addWidget(self.titleLabel)
-        self.viewLayout.addWidget(self.descLabel)
-        self.viewLayout.addWidget(self.descEdit)
-        self.viewLayout.addWidget(self.dateLabel)
-        self.viewLayout.addWidget(self.datePicker)
-        self.viewLayout.addWidget(self.amountLabel)
-        self.viewLayout.addWidget(self.amountSpin)
-        
-        self.widget.setMinimumWidth(350)
-        
+        self.amountSpin.setRange(-9_999_999.99, 9_999_999.99)
+        self.amountSpin.setDecimals(2)
+        self.amountSpin.setValue(amount)
+        self._field("Betrag brutto (€)", self.amountSpin)
+        self.widget.setMinimumWidth(420)
+
+    def _field(self, label, widget, text=None):
+        self.viewLayout.addWidget(BodyLabel(label, self))
+        self.viewLayout.addWidget(widget)
+        if text is not None:
+            widget.setText(text)
+        return widget
+
     def get_data(self):
         return {
-            "description": self.descEdit.text(),
+            "description": self.descEdit.text().strip(),
             "date": datetime.combine(self.datePicker.date.toPython(), datetime.min.time()),
-            "amount": self.amountSpin.value()
+            "amount": self.amountSpin.value(),
+            "supplier_name": self.supplierEdit.text().strip(),
+            "invoice_number": self.numberEdit.text().strip(),
         }
 
-class IncomingInvoiceInterface(QWidget):
-    def __init__(self, db_controller, invoice_type, parent=None):
-        super().__init__(parent=parent)
+
+class EInvoiceViewer(QDialog):
+    """Human readable view of a received e-invoice (pure XML cannot be read otherwise)."""
+
+    def __init__(self, data: EInvoiceData, original_path: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"E-Rechnung {data.number}")
+        self.resize(820, 760)
+        layout = QVBoxLayout(self)
+        browser = QTextBrowser(self)
+        browser.setHtml(to_html(data))
+        layout.addWidget(browser)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        original = PushButton("Originaldatei öffnen", self)
+        original.clicked.connect(lambda: os.startfile(original_path))
+        close = PushButton("Schließen", self)
+        close.clicked.connect(self.accept)
+        buttons.addWidget(original)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+
+class IncomingInvoiceInterface(ListPage):
+    TITLES = {"Lieferant": "Lieferantenrechnungen", "Sonstige": "Sonstige Rechnungen"}
+
+    def __init__(self, db_controller: DBController, invoice_type: str, parent=None):
         self.db_controller = db_controller
         self.invoice_type = invoice_type # "Lieferant" or "Sonstige"
+        columns = [
+            Column("Datum", lambda i: fmt_date(i.date), sort=lambda i: (i.date, i.id), width=100),
+            Column("Lieferant", lambda i: i.supplier_name or "", width=220),
+            Column("Rechnungs-Nr.", lambda i: i.invoice_number or "", width=150),
+            Column("Beschreibung", lambda i: i.description + (" (storniert)" if i.cancelled_at else "")),
+            Column("Betrag", lambda i: fmt_money(i.amount), sort=lambda i: i.amount, width=120, align=RIGHT),
+            Column("Format", lambda i: i.einvoice_format or "PDF/Scan", width=170),
+        ]
+        super().__init__(self.TITLES[invoice_type], columns, (SignalBus.get().incomingInvoicesChanged,),
+                         date_of=lambda i: i.date, row_color=lambda i: COLOR_GREY if i.cancelled_at else None, parent=parent)
         self.setObjectName(f"IncomingInvoiceInterface_{invoice_type}")
-        self._needs_reload = True
-        SignalBus.get().incomingInvoiceAdded.connect(self.insert_row)
-        SignalBus.get().incomingInvoiceUpdated.connect(self.update_row)
-        SignalBus.get().incomingInvoiceDeleted.connect(self.remove_row)
-        self.init_ui()
-        
-    def init_ui(self):
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(24, 24, 24, 24)
-        
-        # Header
-        headerLayout = QHBoxLayout()
-        title_text = "Lieferantenrechnungen" if self.invoice_type == "Lieferant" else "Sonstige Rechnungen"
-        self.titleLabel = SubtitleLabel(title_text, self)
-        
-        self.uploadBtn = PrimaryPushButton("PDF Hochladen", self)
-        self.uploadBtn.clicked.connect(self.upload_pdf)
-        
-        self.exportBtn = PushButton("DATEV Export", self)
-        self.exportBtn.clicked.connect(self.export_datev)
-        
-        self.searchLineEdit = SearchLineEdit(self)
-        self.searchLineEdit.setPlaceholderText("Suchen...")
-        self.searchLineEdit.setFixedWidth(200)
-        self.searchLineEdit.textChanged.connect(self.filter_table)
-        
-        self.monthFilterCombo = ComboBox(self)
-        self.monthFilterCombo.addItem("Alle Monate")
-        self.monthFilterCombo.addItems([f"{i:02d}" for i in range(1, 13)])
-        self.monthFilterCombo.setFixedWidth(130)
-        self.monthFilterCombo.currentTextChanged.connect(self.filter_table)
-        
-        self.yearFilterCombo = ComboBox(self)
-        self.yearFilterCombo.addItem("Alle Jahre")
-        self.yearFilterCombo.setFixedWidth(130)
-        self.yearFilterCombo.currentTextChanged.connect(self.filter_table)
-        
-        headerLayout.addWidget(self.titleLabel)
-        headerLayout.addStretch(1)
-        headerLayout.addWidget(self.searchLineEdit)
-        headerLayout.addWidget(self.monthFilterCombo)
-        headerLayout.addWidget(self.yearFilterCombo)
-        headerLayout.addWidget(self.exportBtn)
-        headerLayout.addWidget(self.uploadBtn)
-        
-        self.vBoxLayout.addLayout(headerLayout)
-        
-        # Table
-        self.table = TableWidget(self)
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Datum", "Beschreibung", "Betrag"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(45)
-        from PySide6.QtWidgets import QAbstractItemView
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.table.verticalHeader().hide()
-        
-        # Performance optimization for scrolling with setCellWidget
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(45)
-        from PySide6.QtWidgets import QAbstractItemView
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.table.itemDoubleClicked.connect(self.on_item_double_clicked)
-        
-        self.vBoxLayout.addWidget(self.table)
-        
-        self.load_data()
-        
+        self.add_header_button("DATEV Export", self.export_datev)
+        self.add_header_button("Rechnungen hochladen", self.upload, primary=True)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self._needs_reload:
-            self.load_data()
-            self._needs_reload = False
+    def records(self) -> list:
+        return self.db_controller.get_incoming_invoices(self.invoice_type)
 
-    def show_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item: return
-        row = item.row()
-        inv_id_item = self.table.item(row, 0)
-        if not inv_id_item: return
-        inv_id = inv_id_item.data(Qt.UserRole)
-        
-        # We need to get the invoice to know the path
-        invoices = self.db_controller.get_incoming_invoices(self.invoice_type)
-        inv = next((i for i in invoices if i.id == inv_id), None)
-        if not inv: return
+    def on_activated(self, invoice):
+        self.open_invoice(invoice)
 
-        from qfluentwidgets import RoundMenu, Action
-        from qfluentwidgets import FluentIcon as FIF
-        menu = RoundMenu(parent=self.table)
-        
-        view_action = Action(FIF.DOCUMENT, "Öffnen", self)
-        view_action.triggered.connect(lambda: self.open_pdf(inv.file_path))
-        menu.addAction(view_action)
-        
-        if not inv.cancelled_at:
-            cancel_action = Action(FIF.CANCEL, "Stornieren", self)
-            cancel_action.triggered.connect(lambda: self.cancel_invoice(inv_id))
-            menu.addAction(cancel_action)
-            
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+    def fill_context_menu(self, menu: RoundMenu, invoice):
+        add_action(menu, FIF.VIEW, "Anzeigen", lambda: self.open_invoice(invoice))
+        add_action(menu, FIF.DOCUMENT, "Originaldatei öffnen", lambda: self.open_file(invoice.file_path))
+        if not invoice.cancelled_at:
+            add_action(menu, FIF.CANCEL, "Stornieren", lambda: self.cancel(invoice.id))
 
-    def on_item_double_clicked(self, item):
-        row = item.row()
-        inv_id_item = self.table.item(row, 0)
-        if not inv_id_item: return
-        inv_id = inv_id_item.data(Qt.UserRole)
-        
-        invoices = self.db_controller.get_incoming_invoices(self.invoice_type)
-        inv = next((i for i in invoices if i.id == inv_id), None)
-        if inv:
-            self.open_pdf(inv.file_path)
-
-    def filter_table(self):
-        search_text = self.searchLineEdit.text().lower()
-        year_filter = self.yearFilterCombo.currentText()
-        month_filter = self.monthFilterCombo.currentText()
-        
-        for i in range(self.table.rowCount()):
-            date_item = self.table.item(i, 0)
-            if not date_item: continue
-            date_text = date_item.text()
-            row_month = date_text[3:5] if len(date_text) >= 10 else ''
-            row_year = date_text[6:10] if len(date_text) >= 10 else ''
-            
-            match_year = (year_filter == 'Alle Jahre' or row_year == year_filter)
-            match_month = (month_filter == 'Alle Monate' or row_month == month_filter)
-            match_search = False
-            if not search_text: match_search = True
-            else:
-                for col in range(1, 4):
-                    item = self.table.item(i, col)
-                    if item and search_text in item.text().lower():
-                        match_search = True
-                        break
-            self.table.setRowHidden(i, not (match_year and match_month and match_search))
-            
-        self.update_export_btn_state()
-        
-    def update_export_btn_state(self):
-        visible_rows = 0
-        for i in range(self.table.rowCount()):
-            if not self.table.isRowHidden(i):
-                visible_rows += 1
-        self.exportBtn.setEnabled(visible_rows > 0)
-
-    def load_data(self):
-
-        invoices = self.db_controller.get_incoming_invoices(self.invoice_type)
-        self.table.setRowCount(len(invoices))
-        for i, inv in enumerate(invoices):
-            first_item = QTableWidgetItem(inv.date.strftime('%d.%m.%Y'))
-            first_item.setData(Qt.UserRole, inv.id)
-            self.table.setItem(i, 0, first_item)
-            description = f"{inv.description} (storniert)" if inv.cancelled_at else inv.description
-            self.table.setItem(i, 1, QTableWidgetItem(description))
-            self.table.setItem(i, 2, QTableWidgetItem(f"{inv.amount:.2f} €"))
-            self.table.setRowHeight(i, 45)
-            if inv.cancelled_at:
-                from PySide6.QtGui import QBrush, QColor
-                for col in range(3):
-                    self.table.item(i, col).setBackground(QBrush(QColor("#E6E6E6")))
-            
-        
-        # Update year filter
-        years = set()
-        for inv in invoices:
-            if inv.date:
-                years.add(str(inv.date.year))
-        
-        current_year = self.yearFilterCombo.currentText()
-        self.yearFilterCombo.blockSignals(True)
-        self.yearFilterCombo.clear()
-        self.yearFilterCombo.addItem("Alle Jahre")
-        for y in sorted(list(years), reverse=True):
-            self.yearFilterCombo.addItem(y)
-        if current_year in years:
-            self.yearFilterCombo.setCurrentText(current_year)
-        self.yearFilterCombo.blockSignals(False)
-        
-        self.filter_table()
-
-            
-    def open_pdf(self, path):
-        if os.path.exists(path):
+    def open_file(self, path):
+        if os.path.isfile(path):
             os.startfile(path)
         else:
-            InfoBar.error("Fehler", "PDF Datei nicht gefunden.", position=InfoBarPosition.TOP, parent=self.window())
-            
-    def cancel_invoice(self, invoice_id):
-        from qfluentwidgets import MessageBox
-        box = MessageBox(
-            "Rechnung stornieren",
-            "Die Rechnung wird als storniert markiert und nicht mehr exportiert. Datensatz und PDF bleiben gemäß GoBD aufbewahrt.\n\nFortfahren?",
-            self.window()
-        )
-        box.yesButton.setText("Ja")
-        box.cancelButton.setText("Nein")
-        if not box.exec():
-            return
-        if self.db_controller.cancel_incoming_invoice(invoice_id):
-            self.load_data()
-            InfoBar.success("Erfolg", "Rechnung storniert.", position=InfoBarPosition.TOP, parent=self.window())
-            
-    def extract_data_from_pdf(self, path):
-        amount = 0.0
-        date_obj = datetime.now().date()
-        try:
-            reader = PdfReader(path)
-            text = ""
-            for page in reader.pages:
-                text += (page.extract_text() or "") + "\n"
-                
-            # Regex to find amount
-            # Matches variations of Gesamtbetrag, Rechnungsbetrag, Endbetrag followed by number
-            amount_match = re.search(r'(?:Gesamtbetrag|Rechnungsbetrag|Endbetrag|Summe|Total|Betrag)[\s\S]{0,30}?(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d+[.,]\d{2})', text, re.IGNORECASE)
-            if amount_match:
-                # The last separator is the decimal separator: 1.234,56 (DE) or 1,234.56 (EN) -> 1234.56
-                val = amount_match.group(1)
-                dec_pos = max(val.rfind(','), val.rfind('.'))
-                val = re.sub(r'[.,]', '', val[:dec_pos]) + '.' + val[dec_pos + 1:]
-                amount = float(val)
-                
-            # Regex to find date
-            # Matches variations of Datum, Rechnungsdatum, Leistungsdatum
-            date_match = re.search(r'(?:Datum|Rechnungsdatum|Leistungsdatum|Lieferdatum)[\s\S]{0,30}?(\d{2}\.\d{2}\.\d{4})', text, re.IGNORECASE)
-            if date_match:
-                date_str = date_match.group(1)
-                date_obj = datetime.strptime(date_str, '%d.%m.%Y').date()
-                
-        except Exception as e:
-            print(f"Error parsing PDF: {e}")
-            
-        return amount, date_obj
+            notify_error(self, "Fehler", "Datei nicht gefunden.")
 
-    def upload_pdf(self):
-        filepaths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "PDF Rechnungen auswählen",
-            "",
-            "PDF Dateien (*.pdf)"
-        )
-        if not filepaths:
-            return
-            
+    def open_invoice(self, invoice):
+        data = read_einvoice(invoice.file_path) if invoice.einvoice_format and os.path.isfile(invoice.file_path) else None
+        if data:
+            EInvoiceViewer(data, invoice.file_path, self.window()).exec()
+        else:
+            self.open_file(invoice.file_path)
+
+    def cancel(self, invoice_id):
+        if confirm(self, "Rechnung stornieren",
+                   "Die Rechnung wird als storniert markiert und nicht mehr exportiert. "
+                   "Datensatz und Datei bleiben gemäß GoBD aufbewahrt.\n\nFortfahren?"):
+            if self.db_controller.cancel_incoming_invoice(invoice_id):
+                notify_success(self, "Storniert", "Rechnung storniert.")
+
+    def upload(self):
+        filepaths, _ = QFileDialog.getOpenFileNames(self, "Rechnungen auswählen", "", "Rechnungen (*.pdf *.xml)")
+        imported = 0
         for filepath in filepaths:
-            # Parse PDF
-            amount, date_obj = self.extract_data_from_pdf(filepath)
-            filename = os.path.basename(filepath)
-            
-            # Show Dialog
-            dialog = IncomingInvoiceDialog(self.window(), default_amount=amount, default_date=date_obj, default_desc=filename)
-            if dialog.exec():
-                data = dialog.get_data()
-                
-                # The controller archives the PDF read-only and stores its hash (GoBD)
-                self.db_controller.add_incoming_invoice(
-                    invoice_type=self.invoice_type,
-                    date=data["date"],
-                    amount=data["amount"],
-                    description=data["description"],
-                    source_path=filepath
-                )
-                
-        self.load_data()
-        InfoBar.success("Erfolg", f"{len(filepaths)} Eingangsrechnungen bearbeitet.", position=InfoBarPosition.TOP, parent=self.window())
+            try:
+                einvoice = read_einvoice(filepath)
+            except Exception:
+                logger.exception("E-Rechnung %s konnte nicht gelesen werden", filepath)
+                einvoice = None
+            if einvoice is None and filepath.lower().endswith(".xml"):
+                notify_error(self, "Keine E-Rechnung", f"{os.path.basename(filepath)} ist keine lesbare XRechnung/ZUGFeRD-Datei.")
+                continue
+            if einvoice:
+                amount = einvoice.payable_amount or einvoice.gross_amount
+                if einvoice.is_credit_note:
+                    amount = -abs(amount)
+                date_obj = einvoice.issue_date or datetime.now().date()
+                description = f"{einvoice.seller_name} {einvoice.number}".strip()
+            else:
+                amount, date_obj = guess_from_pdf_text(filepath)
+                description = os.path.basename(filepath)
+
+            dialog = IncomingInvoiceDialog(self.window(), amount, date_obj, description, einvoice)
+            if not dialog.exec():
+                continue
+            data = dialog.get_data()
+            # The controller archives the file read-only and stores its hash (GoBD)
+            self.db_controller.add_incoming_invoice(
+                invoice_type=self.invoice_type,
+                date=data["date"],
+                amount=data["amount"],
+                description=data["description"] or os.path.basename(filepath),
+                source_path=filepath,
+                einvoice_format=einvoice.format if einvoice else None,
+                invoice_number=data["invoice_number"],
+                supplier_name=data["supplier_name"],
+            )
+            imported += 1
+        if imported:
+            notify_success(self, "Erfolg", f"{imported} Eingangsrechnung(en) gespeichert.")
 
     def export_datev(self):
         from src.utils.datev_generator import DatevGenerator
-        
-        # We export the currently visible invoices
-        invoices = self.db_controller.get_incoming_invoices(self.invoice_type, include_cancelled=False)
+        invoices = [i for i in self.visible_records() if not i.cancelled_at]
         if not invoices:
-            InfoBar.warning("Keine Daten", "Es gibt keine Rechnungen für den Export.", position=InfoBarPosition.TOP, parent=self.window())
+            notify_error(self, "Keine Daten", "Es gibt keine (gefilterten) Rechnungen für den Export.")
             return
-            
         filepath, _ = QFileDialog.getSaveFileName(
-            self,
-            "DATEV ZIP Export speichern",
-            f"DATEV_Eingangsrechnungen_{self.invoice_type}_{datetime.now().strftime('%Y%m%d')}.zip",
-            "ZIP Dateien (*.zip)"
-        )
-        
-        if filepath:
-            generator = DatevGenerator(self.db_controller)
-            if generator.generate_incoming_export(invoices, filepath):
-                InfoBar.success("Erfolg", "DATEV Export erfolgreich erstellt.", position=InfoBarPosition.TOP, parent=self.window())
-            else:
-                InfoBar.error("Fehler", "Fehler beim Erstellen des DATEV Exports.", position=InfoBarPosition.TOP, parent=self.window())
-
-    def insert_row(self, invoice_id):
-        invoice = self.db_controller.get_incoming_invoice(invoice_id)
-        if not invoice: return
-        if invoice.invoice_type == self.invoice_type:
-            self.load_data() # For incoming invoices, there are so few, load_data is very fast and we don't have to rewrite the complex PDF extraction loop
-
-    def update_row(self, invoice_id):
-        self.load_data()
-
-    def remove_row(self, invoice_id):
-        from PySide6.QtCore import Qt
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == invoice_id:
-                self.table.removeRow(row)
-                break
+            self, "DATEV ZIP Export speichern",
+            paths.desktop_path(f"DATEV_Eingangsrechnungen_{self.invoice_type}_{datetime.now().strftime('%Y%m%d')}.zip"),
+            "ZIP Dateien (*.zip)")
+        if not filepath:
+            return
+        if DatevGenerator(self.db_controller).generate_incoming_export(invoices, filepath):
+            self.db_controller.log_actions("IncomingInvoice", [i.id for i in invoices], "DATEV Export")
+            notify_success(self, "Erfolg", f"DATEV Export mit {len(invoices)} Rechnungen erstellt.")
+        else:
+            notify_error(self, "Fehler", "Fehler beim Erstellen des DATEV Exports.")

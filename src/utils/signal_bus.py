@@ -2,33 +2,19 @@ from PySide6.QtCore import QObject, Signal
 
 class SignalBus(QObject):
     """
-    Global Signal Bus to broadcast events across the application.
-    Used for cache invalidation when data changes.
+    Global Signal Bus to broadcast data changes across the application.
+    Views refresh their (virtual) table models when the matching signal fires.
     """
-    dataChanged = Signal() # Keep for global settings
-    
-    invoiceAdded = Signal(int)
-    invoiceUpdated = Signal(int)
-    invoiceDeleted = Signal(int)
-    
-    quoteAdded = Signal(int)
-    quoteUpdated = Signal(int)
-    quoteDeleted = Signal(int)
-    
-    customerAdded = Signal(int)
-    customerUpdated = Signal(int)
-    customerDeleted = Signal(int)
-    
-    cashbookAdded = Signal(int)
-    cashbookUpdated = Signal(int)
-    cashbookDeleted = Signal(int)
-    
-    incomingInvoiceAdded = Signal(int)
-    incomingInvoiceUpdated = Signal(int)
-    incomingInvoiceDeleted = Signal(int)
-    
+    settingsChanged = Signal()
+    invoicesChanged = Signal()
+    quotesChanged = Signal()
+    customersChanged = Signal()
+    cashbookChanged = Signal()
+    incomingInvoicesChanged = Signal()
+    saveFailed = Signal(str)
+
     _instance = None
-    
+
     @classmethod
     def get(cls):
         if cls._instance is None:
