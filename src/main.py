@@ -15,10 +15,7 @@ APP_ID = "Schalk.Rechnungsprogramm"
 
 def _set_windows_app_id():
     # Own taskbar group/icon instead of being grouped under python.exe
-    try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
-    except (AttributeError, OSError):
-        pass
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
 
 def open_database():

@@ -272,7 +272,7 @@ class DocumentEditor(QWidget):
             qty_edit.setText(_german_number(item.quantity))
             unit_edit.setText(item.unit)
             price_edit.setText(_german_number(item.unit_price))
-            rate = item.tax_percent if item.tax_percent is not None else 19.0
+            rate = item.tax_percent
             # Fields without an input column are carried along so saving doesn't drop them
             title_edit.item_description = item.description
             title_edit.item_discount = item.discount_percent or 0.0
@@ -281,12 +281,7 @@ class DocumentEditor(QWidget):
             unit_edit.setText("Stück")
             price_edit.setText("0,00")
             rate = 0.0 if self.db_controller.is_small_business() else TAX_RATE_OPTIONS[0]
-        index = tax_combo.findData(rate)
-        if index < 0:
-            # Rate that is no longer offered (e.g. from an older document)
-            tax_combo.addItem(format_rate(rate), userData=rate)
-            index = tax_combo.count() - 1
-        tax_combo.setCurrentIndex(index)
+        tax_combo.setCurrentIndex(tax_combo.findData(rate))
 
         for col, widget in ((COL_TITLE, title_edit), (COL_QTY, qty_edit), (COL_UNIT, unit_edit), (COL_PRICE, price_edit), (COL_TAX, tax_combo)):
             widget.setEnabled(not self._read_only)

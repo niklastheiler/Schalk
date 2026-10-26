@@ -79,6 +79,9 @@ class CustomerEditor(QWidget):
             notify_error(self, "Fehler", "Bitte geben Sie entweder eine Firma oder einen Namen an.")
             return
         values["country"] = (values["country"] or "DE").upper()
+        if len(values["country"]) != 2 or not values["country"].isalpha():
+            notify_error(self, "Fehler", "Bitte das Land als zweistelligen ISO-Code angeben, z. B. DE, AT, FR.")
+            return
         if self.current_customer_id:
             self.db_controller.update_customer(self.current_customer_id, **values)
             saved_id = self.current_customer_id

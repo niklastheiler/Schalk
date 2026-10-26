@@ -9,8 +9,7 @@ def _resolve_data_dir() -> str:
     if override:
         return os.path.abspath(override)
     # Per-user application data, writable even if the program is installed under "C:\Program Files"
-    local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(local_app_data, "Schalk")
+    return os.path.join(os.environ["LOCALAPPDATA"], "Schalk")
 
 
 DATA_DIR = _resolve_data_dir()
@@ -42,16 +41,13 @@ _FOLDERID_DESKTOP = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
 
 def _known_desktop_folder() -> str:
     """Real desktop folder, also when it is redirected (e.g. OneDrive)."""
+    path_ptr = ctypes.c_wchar_p()
+    if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(_GUID(_FOLDERID_DESKTOP)), 0, None, ctypes.byref(path_ptr)) != 0:
+        raise OSError("Der Desktop-Ordner konnte nicht ermittelt werden.")
     try:
-        path_ptr = ctypes.c_wchar_p()
-        result = ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(_GUID(_FOLDERID_DESKTOP)), 0, None, ctypes.byref(path_ptr))
-        if result == 0:
-            path = path_ptr.value
-            ctypes.windll.ole32.CoTaskMemFree(path_ptr)
-            return path
-    except (AttributeError, OSError):
-        pass
-    return os.path.join(os.path.expanduser("~"), "Desktop")
+        return path_ptr.value
+    finally:
+        ctypes.windll.ole32.CoTaskMemFree(path_ptr)
 
 
 def desktop_path(filename: str) -> str:

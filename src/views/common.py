@@ -167,13 +167,9 @@ class RecordFilterProxy(QSortFilterProxyModel):
         self.predicate: Optional[Callable[[Any], bool]] = None
 
     def set_filters(self, year=None, month=None, search=""):
-        if hasattr(self, "beginFilterChange"): # Qt >= 6.10
-            self.beginFilterChange()
-            self.year, self.month, self.search = year, month, search.lower().strip()
-            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
-        else:
-            self.year, self.month, self.search = year, month, search.lower().strip()
-            self.invalidateFilter()
+        self.beginFilterChange()
+        self.year, self.month, self.search = year, month, search.lower().strip()
+        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
 
     def filterAcceptsRow(self, source_row, source_parent):
         model: RecordTableModel = self.sourceModel()

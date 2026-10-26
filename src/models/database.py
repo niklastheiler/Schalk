@@ -298,7 +298,7 @@ class DatabaseManager:
             with open(self.db_path, "rb") as f:
                 data = f.read()
         if data and not data.startswith(FILE_MAGIC):
-            raise WrongPasswordError(f"Unbekanntes Datenbankformat ({self.db_path}). Die Datei stammt von einer älteren Programmversion und kann gelöscht werden.")
+            raise WrongPasswordError(f"Die Datei {self.db_path} ist keine Schalk-Datenbank.")
 
         if os.path.exists(self.key_path):
             self.fernet = Fernet(key_store.load_key(self.key_path))

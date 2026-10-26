@@ -30,18 +30,8 @@ UNIT_CODES = {
     "monat": "MON", "monate": "MON",
 }
 
-COUNTRY_CODES = {"deutschland": "DE", "österreich": "AT", "schweiz": "CH", "frankreich": "FR", "niederlande": "NL",
-                 "belgien": "BE", "luxemburg": "LU", "italien": "IT", "spanien": "ES", "polen": "PL", "dänemark": "DK",
-                 "tschechien": "CZ", "schweden": "SE"}
-
-
-def country_code(name) -> str:
-    if not name:
-        return "DE"
-    name = name.strip()
-    if len(name) == 2 and name.isalpha():
-        return name.upper()
-    return COUNTRY_CODES.get(name.lower(), "DE")
+def country_code(code) -> str:
+    return (code or "DE").strip().upper()
 
 
 def _dec(value) -> Decimal:

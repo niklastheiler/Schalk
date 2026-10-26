@@ -4,12 +4,12 @@ Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 10/1
 
 ## Installation (aus dem Quellcode)
 
-Voraussetzung: Python 3.11, 3.12 oder 3.13 (64 Bit) von python.org.
+Voraussetzung: **Python 3.14** (64 Bit) von python.org. Python 3.15 wird noch nicht unterstützt, weil Saxon-HE (EN-16931-Prüfung) dafür noch kein Paket anbietet.
 
 ```powershell
 git clone https://github.com/niklastheiler/Schalk.git
 cd Schalk
-python -m venv venv
+py -3.14 -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python run.py

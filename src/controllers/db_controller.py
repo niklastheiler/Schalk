@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from src.models.database import DatabaseManager, Setting, Customer, Invoice, InvoiceItem, Quote, QuoteItem, CashbookEntry, DocumentHistory, IncomingInvoice
 from src.utils.signal_bus import SignalBus
 from src.utils.calculations import calculate_totals, item_total
-from src.utils.tax import has_zero_rate, vat_category, EXEMPTION_REQUIRED_MESSAGE
+from src.utils.tax import TAX_RATE_OPTIONS, has_zero_rate, vat_category, EXEMPTION_REQUIRED_MESSAGE
 from src.utils.archive import archive_file, verify_file
 from src.utils import paths
 
@@ -370,6 +370,9 @@ class DBController:
                 raise ValueError("Jede Position benötigt eine Bezeichnung.")
             if quantity <= 0:
                 raise ValueError(f"Die Menge der Position '{item['title']}' muss größer als 0 sein.")
+            tax_percent = float(item.get('tax_percent', TAX_RATE_OPTIONS[0]))
+            if tax_percent not in TAX_RATE_OPTIONS:
+                raise ValueError(f"Unzulässiger Steuersatz {tax_percent} % bei '{item['title']}'.")
             normalized.append({
                 "title": item['title'].strip(),
                 "description": item.get('description'),
@@ -377,7 +380,7 @@ class DBController:
                 "unit": (item.get('unit') or "Stück").strip(),
                 "unit_price": unit_price,
                 "discount_percent": discount,
-                "tax_percent": float(item.get('tax_percent', 19.0)),
+                "tax_percent": tax_percent,
                 "total_price": item_total(quantity, unit_price, discount),
             })
         return normalized

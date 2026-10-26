@@ -1,21 +1,11 @@
 import os
 import sys
 import tempfile
-import types
 
 # Separate data folder for the whole test run (must be set before src.utils.paths is imported)
 os.environ["SCHALK_DATA_DIR"] = tempfile.mkdtemp(prefix="schalk_test_")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-try:
-    import win32crypt  # noqa: F401  (real DPAPI on Windows)
-except ImportError:
-    # Allows running the logic tests on a non-Windows CI machine
-    fake = types.ModuleType("win32crypt")
-    fake.CryptProtectData = lambda data, desc, entropy, a, b, flags: b"P" + entropy + data
-    fake.CryptUnprotectData = lambda blob, entropy, a, b, flags: (None, blob[1 + len(entropy):])
-    sys.modules["win32crypt"] = fake
 
 import pytest
 from PySide6.QtWidgets import QApplication

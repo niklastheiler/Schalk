@@ -128,8 +128,8 @@ class PDFGenerator:
         if buyer.get("postal_code") or buyer.get("city"):
             elements.append(self._p(f"{buyer.get('postal_code') or ''} {buyer.get('city') or ''}"))
         country = (buyer.get("country") or "DE").upper()
-        if country not in ("DE", "DEUTSCHLAND"):
-            elements.append(self._p(buyer.get("country")))
+        if country != "DE":
+            elements.append(self._p(country))
         elements.append(Spacer(1, 40))
 
     @staticmethod
