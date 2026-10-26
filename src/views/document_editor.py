@@ -3,6 +3,8 @@ from typing import Optional
 from PySide6.QtCore import QLocale, QStringListModel, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QAbstractItemView, QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets.components.widgets.line_edit import CompleterMenu, LineEditButton
 from qfluentwidgets import (BodyLabel, ComboBox, EditableComboBox, LineEdit, PrimaryPushButton, PushButton,
                             SearchLineEdit, SubtitleLabel, TableWidget)
 from src.controllers.db_controller import DBController, GoBDError, NO_ITEMS_MESSAGE
@@ -84,6 +86,12 @@ class DocumentEditor(QWidget):
         self._completer.activated.connect(self._on_customer_chosen)
         self.customerSearch.setCompleter(self._completer)
         self.customerSearch.textEdited.connect(self._on_customer_search_edited)
+        # Arrow on the right opens the complete customer list like a drop-down; typing still filters
+        self.customerDropdownBtn = LineEditButton(FIF.ARROW_DOWN, self.customerSearch)
+        self.customerDropdownBtn.setToolTip("Alle Kunden anzeigen")
+        self.customerDropdownBtn.clicked.connect(self.show_all_customers)
+        self.customerSearch.hBoxLayout.addWidget(self.customerDropdownBtn, 0, Qt.AlignRight)
+        self.customerSearch.setTextMargins(0, 0, 90, 0)
         customerForm.addRow("Kunde", self.customerSearch)
         self.customerHint = BodyLabel("")
         customerForm.addRow("", self.customerHint)
@@ -177,6 +185,17 @@ class DocumentEditor(QWidget):
             label = f"{customer.display_name} – {customer.city or ''} (#{customer.id})"
             self._customer_entries[label] = customer.id
         self._completer_model.setStringList(list(self._customer_entries))
+
+    def show_all_customers(self):
+        if not self._customer_entries:
+            return
+        if not self.customerSearch._completerMenu:
+            self.customerSearch.setCompleterMenu(CompleterMenu(self.customerSearch))
+        menu = self.customerSearch._completerMenu
+        self._completer.setCompletionPrefix("")
+        menu.setCompletion(self._completer.completionModel())
+        menu.setMaxVisibleItems(self._completer.maxVisibleItems())
+        menu.popup()
 
     def _on_customer_chosen(self, label: str):
         customer = self.db_controller.get_customer(self._customer_entries.get(label))
