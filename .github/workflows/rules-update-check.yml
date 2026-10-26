@@ -1,0 +1,54 @@
+# Weekly check for new versions of the official validation rules (CEN EN 16931, KoSIT XRechnung)
+# and the Mustang validator; opens an issue with the update steps when one is available.
+name: Prüfregeln aktuell?
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Neue Versionen suchen
+        id: check
+        run: |
+          set +e
+          python tools/rule_updates.py | tee report.txt
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -eq 10 ]; then echo "outdated=true" >> "$GITHUB_OUTPUT"; elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Issue anlegen
+        if: steps.check.outputs.outdated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Neue Version der E-Rechnungs-Prüfregeln verfügbar"
+          if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+            echo "Issue ist bereits offen."
+            exit 0
+          fi
+          {
+            echo "Der wöchentliche Check hat neuere Versionen gefunden:"
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+            echo
+            echo "**Aktualisieren:**"
+            echo "1. \`python tools/rule_updates.py --update\` ausführen (ersetzt die Regelwerke unter \`src/resources\` und \`rules.json\`)."
+            echo "2. Bei neuer Mustang-Version: Version und SHA-1 in \`.github/workflows/einvoice-check.yml\` und \`src/resources/rules.json\` anpassen."
+            echo "3. PR öffnen: Die E-Rechnungs-Prüfung zeigt, ob alle Steuerfälle die neuen Regeln bestehen."
+          } > body.md
+          gh issue create --title "$title" --body-file body.md
