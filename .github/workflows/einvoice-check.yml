@@ -17,6 +17,11 @@ jobs:
     runs-on: windows-latest
     env:
       QT_QPA_PLATFORM: offscreen
+    # Python steps run in cmd like build.bat: PowerShell on GitHub stops on any stderr output
+    # (e.g. Qt messages at exit) and would fail the step although the command succeeded
+    defaults:
+      run:
+        shell: cmd
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +46,7 @@ jobs:
       - name: Mustang-Validator laden
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $url = "https://repo1.maven.org/maven2/org/mustangproject/Mustang-CLI/$env:MUSTANG_VERSION/Mustang-CLI-$env:MUSTANG_VERSION.jar"
           Invoke-WebRequest $url -OutFile mustang.jar
           $hash = (Get-FileHash mustang.jar -Algorithm SHA1).Hash.ToLower()
@@ -49,6 +55,8 @@ jobs:
       - name: Rechnungen validieren
         shell: pwsh
         run: |
+          # Java writes log lines to stderr; only the report decides
+          $ErrorActionPreference = "Continue"
           $failed = @()
           foreach ($file in Get-ChildItem check -File | Where-Object { $_.Extension -in ".pdf", ".xml" }) {
             $report = java -jar mustang.jar --action validate --no-notices --source $file.FullName 2>&1 | Out-String
