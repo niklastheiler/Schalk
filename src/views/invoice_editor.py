@@ -79,8 +79,7 @@ class InvoiceEditor(DocumentEditor):
             self.customerSearch.setText(buyer["name"] or "")
             self.companyEdit.setText(buyer["name"] or "")
             self.nameEdit.clear()
-            for edit, key in ((self.addressEdit, "address"), (self.postalCodeEdit, "postal_code"), (self.cityEdit, "city"),
-                              (self.emailEdit, "email"), (self.vatIdEdit, "vat_id")):
+            for edit, key in ((self.addressEdit, "address"), (self.postalCodeEdit, "postal_code"), (self.cityEdit, "city")):
                 edit.setText(buyer.get(key) or "")
             # GoBD: finalized invoices are immutable
             self.set_read_only(True)
