@@ -9,6 +9,7 @@ from qfluentwidgets import (BodyLabel, DatePicker, DoubleSpinBox, FluentIcon as 
                             PushButton, RoundMenu, SubtitleLabel)
 from src.controllers.db_controller import DBController
 from src.utils import paths
+from src.utils.archive import is_pdf
 from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
@@ -152,9 +153,12 @@ class IncomingInvoiceInterface(ListPage):
                 notify_success(self, "Storniert", "Rechnung storniert.")
 
     def upload(self):
-        filepaths, _ = QFileDialog.getOpenFileNames(self, "Rechnungen auswählen", paths.downloads_dir(), "Rechnungen (*.pdf *.xml)")
+        filepaths, _ = QFileDialog.getOpenFileNames(self, "Rechnungen auswählen", paths.downloads_dir(), "Rechnungen als PDF oder XRechnung (*.pdf *.xml)")
         imported = 0
         for filepath in filepaths:
+            if not filepath.lower().endswith(".xml") and not is_pdf(filepath):
+                notify_error(self, "Kein PDF", f"{os.path.basename(filepath)} ist weder ein PDF noch eine XRechnung (XML).")
+                continue
             try:
                 einvoice = read_einvoice(filepath)
             except Exception:
