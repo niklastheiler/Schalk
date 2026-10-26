@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLay
 from qfluentwidgets import FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
 from src.controllers.db_controller import DBController
 from src.utils.signal_bus import SignalBus
-from src.views.common import Column, ListPage, confirm, notify_error, notify_success
+from src.views.common import Column, ListPage, confirm, make_scrollable, notify_error, notify_success
 from src.views.invoice_interface import add_action
 
 
@@ -46,6 +46,9 @@ class CustomerEditor(QWidget):
         header.addWidget(save)
         layout.addLayout(header)
 
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 8, 12, 0)
         form = QFormLayout()
         form.setSpacing(12)
         for key, label, placeholder in self.FIELDS:
@@ -53,8 +56,9 @@ class CustomerEditor(QWidget):
             edit.setPlaceholderText(placeholder)
             form.addRow(label, edit)
             self.edits[key] = edit
-        layout.addLayout(form)
-        layout.addStretch(1)
+        content_layout.addLayout(form)
+        content_layout.addStretch(1)
+        layout.addWidget(make_scrollable(content))
 
     def clear_form(self):
         self.current_customer_id = None

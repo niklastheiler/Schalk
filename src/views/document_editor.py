@@ -10,7 +10,7 @@ from src.utils.calculations import calculate_totals, item_total
 from src.utils.signal_bus import SignalBus
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
                            has_zero_rate)
-from src.views.common import fmt_money, keep_scrollbars_visible, notify_error
+from src.views.common import fmt_money, make_scrollable, notify_error, use_classic_scrollbars
 
 SMALL_BUSINESS_REASON = EXEMPTION_REASON_PRESETS[0]
 
@@ -55,8 +55,8 @@ class DocumentEditor(QWidget):
 
     # --- UI ---
     def init_ui(self):
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(24, 24, 24, 24)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 24, 24, 24)
 
         headerLayout = QHBoxLayout()
         self.backBtn = PushButton("Zurück")
@@ -69,7 +69,13 @@ class DocumentEditor(QWidget):
         headerLayout.addWidget(self.titleLabel)
         headerLayout.addStretch(1)
         headerLayout.addWidget(self.saveBtn)
-        self.vBoxLayout.addLayout(headerLayout)
+        outer.addLayout(headerLayout)
+
+        # The header stays fixed; customer data, items and totals scroll on small screens
+        content = QWidget()
+        self.vBoxLayout = QVBoxLayout(content)
+        self.vBoxLayout.setContentsMargins(0, 8, 12, 0)
+        outer.addWidget(make_scrollable(content))
 
         formLayout = QHBoxLayout()
         customerForm = QFormLayout()
@@ -124,7 +130,8 @@ class DocumentEditor(QWidget):
         self.vBoxLayout.addLayout(tableHeaderLayout)
 
         self.table = TableWidget(self)
-        keep_scrollbars_visible(self.table)
+        use_classic_scrollbars(self.table)
+        self.table.setMinimumHeight(240)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'MwSt.', ''])
