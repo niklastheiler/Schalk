@@ -15,6 +15,9 @@ from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, Prim
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 from PySide6.QtWidgets import QStyledItemDelegate
+from PySide6.QtCore import QByteArray
+from PySide6.QtSvg import QSvgRenderer
+from qfluentwidgets import themeColor
 
 RECORD_ROLE = Qt.UserRole + 1
 
@@ -117,6 +120,10 @@ class Column:
     # Drop-down in the cell: choices(record) lists the selectable values, on_choice(record, value) applies one
     choices: Optional[Callable[[Any], list]] = None
     on_choice: Optional[Callable[[Any, str], None]] = None
+    # Clickable icon instead of text: icon_svg is drawn in the theme color, on_click(record) runs on a click
+    icon_svg: Optional[str] = None
+    on_click: Optional[Callable[[Any], None]] = None
+    tooltip: Optional[str] = None
 
 
 _NUMBER_RE = re.compile(r"(\d+)")
@@ -218,6 +225,8 @@ class RecordTableModel(QAbstractTableModel):
             return self.text(row, col)
         if role == Qt.TextAlignmentRole:
             return int(self.columns[col].align)
+        if role == Qt.ToolTipRole:
+            return self.columns[col].tooltip
         if role == Qt.BackgroundRole and self.row_color:
             color = self.row_color(self._rows[row])
             return QBrush(color) if color else None
@@ -277,6 +286,42 @@ class ChoiceDelegate(TableItemDelegate):
 
     def setModelData(self, editor, model, index):
         pass # the value is applied through on_choice
+
+
+# Rocket from the Lucide icon set (ISC license), {color} is filled in when drawing
+ROCKET_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>'
+    '<path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>'
+    '<path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>'
+    '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>')
+ACTION_ICON_SIZE = 18
+
+
+class ActionDelegate(TableItemDelegate):
+    """Draws a clickable icon in every cell of one column; ListPage handles the click."""
+
+    def __init__(self, svg: str, table):
+        super().__init__(table)
+        self._svg = svg
+        self._row_state = table.delegate # tracks hover/selection for the whole row
+        self._renderers = {} # theme color -> QSvgRenderer
+
+    def _renderer(self) -> QSvgRenderer:
+        color = themeColor().name()
+        renderer = self._renderers.get(color)
+        if renderer is None:
+            renderer = self._renderers[color] = QSvgRenderer(QByteArray(self._svg.format(color=color).encode()))
+        return renderer
+
+    def paint(self, painter, option, index):
+        state = self._row_state
+        self.hoverRow, self.pressedRow, self.selectedRows = state.hoverRow, state.pressedRow, state.selectedRows
+        super().paint(painter, option, index)
+        center = QRectF(option.rect).center()
+        half = ACTION_ICON_SIZE / 2
+        self._renderer().render(painter, QRectF(center.x() - half, center.y() - half, ACTION_ICON_SIZE, ACTION_ICON_SIZE))
 
 
 class RecordFilterProxy(QSortFilterProxyModel):
@@ -377,6 +422,8 @@ class ListPage(QWidget):
         for i, column in enumerate(columns):
             if column.choices:
                 self.table.setItemDelegateForColumn(i, ChoiceDelegate(column, self.table))
+            elif column.icon_svg:
+                self.table.setItemDelegateForColumn(i, ActionDelegate(column.icon_svg, self.table))
         self.table.clicked.connect(self._on_cell_clicked)
         self.table.doubleClicked.connect(self._on_cell_double_clicked)
         self.vBoxLayout.addWidget(self.table)
@@ -388,11 +435,15 @@ class ListPage(QWidget):
         self._set_sort(0, Qt.DescendingOrder if columns[0].descending else Qt.AscendingOrder)
 
     def _on_cell_clicked(self, index):
-        if self.model.columns[index.column()].choices:
+        column = self.model.columns[index.column()]
+        if column.choices:
             self.table.edit(index) # opens the drop-down
+        elif column.on_click:
+            column.on_click(index.data(RECORD_ROLE))
 
     def _on_cell_double_clicked(self, index):
-        if not self.model.columns[index.column()].choices:
+        column = self.model.columns[index.column()]
+        if not column.choices and not column.on_click:
             self.on_activated(index.data(RECORD_ROLE))
 
     # --- Sorting ---
