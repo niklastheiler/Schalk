@@ -49,7 +49,8 @@ class InvoiceListPage(ListPage):
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT, descending=True),
             Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i) if self._due_text(i) else None, width=110),
-            Column("Status", lambda i: i.status, width=120),
+            Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
+                   on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
         ]
         super().__init__("Rechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)
@@ -101,8 +102,8 @@ class InvoiceListPage(ListPage):
             add_action(menu, FIF.CANCEL, "Stornieren", lambda: interface.change_status(invoice.id, "Storniert"))
         add_action(menu, FIF.HISTORY, "Verlauf anzeigen", lambda: interface.show_history(invoice.id))
 
-        statuses = [s for s in c.allowed_invoice_statuses(invoice) if s != invoice.status]
-        if statuses and not invoice.cancels_invoice_id:
+        statuses = c.next_invoice_statuses(invoice)
+        if statuses:
             menu.addSeparator()
             status_menu = RoundMenu("Status ändern", menu)
             status_menu.setIcon(FIF.TAG)
