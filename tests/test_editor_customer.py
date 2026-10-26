@@ -51,4 +51,3 @@ def test_typing_in_the_search_field_deselects_the_customer(controller, qapp):
     _choose(editor, "Bestandskunde AG")
     editor.customerSearch.textEdited.emit("Ganz anderer Kunde")
     assert editor.customer_id is None
-
