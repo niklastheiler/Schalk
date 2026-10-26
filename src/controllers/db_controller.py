@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 DRAFT_PREFIX = "ENTWURF-"
 INVOICE_STATUSES = ["Entwurf", "Offen", "Teilbezahlt", "Bezahlt", "Überfällig", "Storniert"]
+# Process: draft -> issued -> (partly) paid; "Überfällig" is set automatically, "Bezahlt" can be
+# taken back (e.g. returned direct debit), cancelling creates a Stornorechnung
+INVOICE_TRANSITIONS = {
+    "Entwurf": ["Offen"],
+    "Offen": ["Teilbezahlt", "Bezahlt", "Storniert"],
+    "Überfällig": ["Teilbezahlt", "Bezahlt", "Storniert"],
+    "Teilbezahlt": ["Bezahlt", "Storniert"],
+    "Bezahlt": ["Offen"],
+    "Storniert": [],
+}
 QUOTE_STATUSES = ["Entwurf", "Versendet", "Angenommen", "Abgelehnt", "Abgelaufen"]
 CASHBOOK_TYPES = ["Einnahme", "Barentnahme Privat", "Barentnahme Firma"]
 CASHBOOK_INCOME_TYPES = ["Einnahme"]
@@ -640,12 +650,11 @@ class DBController:
             self._commit(session, invoices=[invoice_id])
             return True
 
-    def allowed_invoice_statuses(self, invoice: Invoice) -> list:
-        if invoice.status == "Storniert":
-            return ["Storniert"]
-        if not self.is_finalized(invoice):
-            return ["Entwurf", "Offen", "Bezahlt"]
-        return ["Offen", "Teilbezahlt", "Bezahlt", "Überfällig", "Storniert"]
+    def next_invoice_statuses(self, invoice: Invoice) -> list:
+        """The statuses that make sense next in the invoice process (empty = final)."""
+        if invoice.cancels_invoice_id:
+            return [] # a Stornorechnung is final
+        return list(INVOICE_TRANSITIONS.get(invoice.status, []))
 
     def update_invoice_status(self, invoice_id: int, status: str, user: str = None):
         """Returns (success, message)."""
@@ -663,10 +672,10 @@ class DBController:
                     return False, "Rechnung nicht gefunden."
                 if invoice.status == status:
                     return True, ""
-                if status not in self.allowed_invoice_statuses(invoice):
+                if status not in self.next_invoice_statuses(invoice):
                     if status == "Entwurf":
                         return False, "Eine festgeschriebene Rechnung kann nicht wieder zum Entwurf werden."
-                    return False, f"Statuswechsel von '{invoice.status}' nach '{status}' ist nicht erlaubt."
+                    return False, f"Statuswechsel von '{invoice.status}' nach '{status}' ist nicht vorgesehen."
 
                 message = ""
                 if not self.is_finalized(invoice):

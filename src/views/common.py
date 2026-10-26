@@ -7,11 +7,14 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
-from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea, QFrame, QHBoxLayout, QHeaderView, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
                             RoundMenu, SearchLineEdit, SubtitleLabel, TableView)
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets.components.widgets.table_view import TableItemDelegate
+from PySide6.QtWidgets import QStyledItemDelegate
 
 RECORD_ROLE = Qt.UserRole + 1
 
@@ -111,6 +114,9 @@ class Column:
     width: Optional[int] = None # None = stretch
     align: Qt.AlignmentFlag = Qt.AlignLeft | Qt.AlignVCenter
     descending: bool = False # direction of the first click on the column header (newest/largest first)
+    # Drop-down in the cell: choices(record) lists the selectable values, on_choice(record, value) applies one
+    choices: Optional[Callable[[Any], list]] = None
+    on_choice: Optional[Callable[[Any, str], None]] = None
 
 
 _NUMBER_RE = re.compile(r"(\d+)")
@@ -198,6 +204,12 @@ class RecordTableModel(QAbstractTableModel):
             text = self._search[record] = " ".join(self._record_texts(record)).lower()
         return text
 
+    def flags(self, index):
+        flags = super().flags(index)
+        if index.isValid() and self.columns[index.column()].choices and self.columns[index.column()].choices(self._rows[index.row()]):
+            flags |= Qt.ItemIsEditable
+        return flags
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
@@ -212,6 +224,59 @@ class RecordTableModel(QAbstractTableModel):
         if role == RECORD_ROLE:
             return self._rows[row]
         return None
+
+
+class ChoiceDelegate(TableItemDelegate):
+    """
+    Drop-down for one column. Only the clicked cell gets a real combo box (no widget per row),
+    the other cells just show an arrow, so long lists stay fast.
+    """
+
+    def __init__(self, column: Column, table):
+        super().__init__(table)
+        self.column = column
+        self._row_state = table.delegate # tracks hover/selection for the whole row
+
+    def _choices(self, index) -> list:
+        record = index.data(RECORD_ROLE)
+        return self.column.choices(record) if record is not None else []
+
+    def paint(self, painter, option, index):
+        state = self._row_state
+        self.hoverRow, self.pressedRow, self.selectedRows = state.hoverRow, state.pressedRow, state.selectedRows
+        super().paint(painter, option, index)
+        if self._choices(index):
+            rect = option.rect
+            FIF.ARROW_DOWN.render(painter, QRectF(rect.right() - 20, rect.center().y() - 4, 9, 9))
+
+    def createEditor(self, parent, option, index):
+        choices = self._choices(index)
+        if not choices:
+            return None
+        record = index.data(RECORD_ROLE)
+        combo = ComboBox(parent)
+        combo.addItems([self.column.text(record)] + choices)
+        combo.setCurrentIndex(0)
+
+        def chosen(position):
+            if position <= 0:
+                return
+            value = combo.itemText(position)
+            self.closeEditor.emit(combo, QStyledItemDelegate.NoHint)
+            # Applied after the editor is gone: the change refreshes (and resets) the table
+            QTimer.singleShot(0, lambda: self.column.on_choice(record, value))
+        combo.currentIndexChanged.connect(chosen)
+        QTimer.singleShot(0, combo._showComboMenu)
+        return combo
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect.adjusted(2, 2, -2, -2))
+
+    def setEditorData(self, editor, index):
+        pass
+
+    def setModelData(self, editor, model, index):
+        pass # the value is applied through on_choice
 
 
 class RecordFilterProxy(QSortFilterProxyModel):
@@ -309,7 +374,11 @@ class ListPage(QWidget):
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
-        self.table.doubleClicked.connect(lambda index: self.on_activated(index.data(RECORD_ROLE)))
+        for i, column in enumerate(columns):
+            if column.choices:
+                self.table.setItemDelegateForColumn(i, ChoiceDelegate(column, self.table))
+        self.table.clicked.connect(self._on_cell_clicked)
+        self.table.doubleClicked.connect(self._on_cell_double_clicked)
         self.vBoxLayout.addWidget(self.table)
 
         for signal in change_signals:
@@ -317,6 +386,14 @@ class ListPage(QWidget):
 
         # Initial order: first column in its natural direction (lists with a date: newest first)
         self._set_sort(0, Qt.DescendingOrder if columns[0].descending else Qt.AscendingOrder)
+
+    def _on_cell_clicked(self, index):
+        if self.model.columns[index.column()].choices:
+            self.table.edit(index) # opens the drop-down
+
+    def _on_cell_double_clicked(self, index):
+        if not self.model.columns[index.column()].choices:
+            self.on_activated(index.data(RECORD_ROLE))
 
     # --- Sorting ---
     def _on_header_clicked(self, column: int):
