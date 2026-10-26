@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The release workflow runs this check first and only publishes when it passes
+  workflow_call:
 
 env:
   MUSTANG_VERSION: "2.26.0"

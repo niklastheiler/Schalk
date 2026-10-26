@@ -12,7 +12,12 @@ permissions:
   contents: write
 
 jobs:
+  # Tests and the independent Mustang validation of all tax cases; nothing is built or published if it fails
+  check:
+    uses: ./.github/workflows/einvoice-check.yml
+
   release:
+    needs: check
     runs-on: windows-latest
     env:
       QT_QPA_PLATFORM: offscreen

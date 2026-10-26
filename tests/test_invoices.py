@@ -134,3 +134,8 @@ def test_quote_to_invoice(controller):
     invoice_id = c.create_invoice_from_quote(quote_id)
     assert len(c.get_invoice(invoice_id).items) == 2
     assert c.get_quote(quote_id).status == "Angenommen"
+
+
+def test_pdf_texts_are_escaped_and_keep_line_breaks():
+    from src.utils.pdf_generator import _markup
+    assert _markup("Rohr <Ø 50> & Co.\nZweite Zeile\r\nDritte") == "Rohr &lt;Ø 50&gt; &amp; Co.<br/>Zweite Zeile<br/>Dritte"

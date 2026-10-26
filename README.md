@@ -31,7 +31,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 
 1. In `src/version.py` die `APP_VERSION` erhöhen und in `CHANGELOG.md` einen Abschnitt `## <Version>` anlegen.
 2. Nach dem Merge auf `main` unter GitHub → Actions → Release → „Run workflow“ starten (oder einen Tag pushen, z. B. `git tag v1.1` und `git push origin v1.1`).
-3. Der Workflow `.github/workflows/release.yml` baut die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
+3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
 
 ## Datenablage und Sicherheit
 
@@ -65,6 +65,14 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 - Rechnungen und Kassenbuch sind über SHA-256-Hash-Ketten gesichert. Archivierte Dateien sind schreibgeschützt und mit Hash gespeichert.
 - Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Eingangsrechnungen werden storniert, nie gelöscht.
 - Jede Aktion wird mit dem Windows-Benutzer protokolliert (Verlauf). Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft.
+
+## Prüfregeln aktuell halten
+
+Die offiziellen Prüfregeln (CEN EN 16931, KoSIT XRechnung) liegen unter `src/resources`, ihre Versionen stehen in `src/resources/rules.json`. Ein wöchentlicher Workflow prüft, ob es neuere Versionen gibt, und legt dann ein Issue an. Aktualisiert wird mit:
+
+```powershell
+python tools/rule_updates.py --update
+```
 
 ## Tests
 
