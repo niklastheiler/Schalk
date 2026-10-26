@@ -37,13 +37,14 @@ class _GUID(ctypes.Structure):
 
 
 _FOLDERID_DESKTOP = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
+_FOLDERID_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
 
 
-def _known_desktop_folder() -> str:
-    """Real desktop folder, also when it is redirected (e.g. OneDrive)."""
+def _known_folder(folder_id: str, name: str) -> str:
+    """Real location of a Windows user folder, also when it is moved or redirected (e.g. OneDrive)."""
     path_ptr = ctypes.c_wchar_p()
-    if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(_GUID(_FOLDERID_DESKTOP)), 0, None, ctypes.byref(path_ptr)) != 0:
-        raise OSError("Der Desktop-Ordner konnte nicht ermittelt werden.")
+    if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(_GUID(folder_id)), 0, None, ctypes.byref(path_ptr)) != 0:
+        raise OSError(f"Der Ordner '{name}' konnte nicht ermittelt werden.")
     try:
         return path_ptr.value
     finally:
@@ -51,4 +52,8 @@ def _known_desktop_folder() -> str:
 
 
 def desktop_path(filename: str) -> str:
-    return os.path.join(_known_desktop_folder(), filename)
+    return os.path.join(_known_folder(_FOLDERID_DESKTOP, "Desktop"), filename)
+
+
+def downloads_dir() -> str:
+    return _known_folder(_FOLDERID_DOWNLOADS, "Downloads")
