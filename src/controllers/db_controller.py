@@ -201,8 +201,13 @@ class DBController:
         return {key: self.get_setting(key) for key in SELLER_KEYS}
 
     # --- Cashbook (GoBD) ---
+    @staticmethod
+    def _cashbook_chain_order():
+        return CashbookEntry.finalized_at, CashbookEntry.receipt_number
+
     def _last_cashbook_hash(self, session: Session) -> str:
-        last_entry = session.query(CashbookEntry).order_by(CashbookEntry.id.desc()).first()
+        last_entry = (session.query(CashbookEntry).filter(CashbookEntry.finalized_at != None)
+                      .order_by(*(c.desc() for c in self._cashbook_chain_order())).first())
         return last_entry.hash_chain if last_entry and last_entry.hash_chain else "GENESIS"
 
     @staticmethod
@@ -231,23 +236,37 @@ class DBController:
     def _cashbook_hash_payload(entry: CashbookEntry) -> str:
         return "|".join(str(v) for v in [
             entry.id, _iso(entry.entry_date), _num(entry.amount), entry.receipt_number, entry.description,
-            entry.entry_type, entry.attachment_hash or "", int(bool(entry.is_storno)), entry.storno_of_id or ""
+            entry.entry_type, entry.attachment_hash or "", int(bool(entry.is_storno)), entry.storno_of_id or "",
+            _iso(entry.finalized_at)
         ])
 
-    def _add_cashbook_row(self, session: Session, user: str = None, **fields) -> CashbookEntry:
+    def _seal_cashbook_entry(self, session: Session, entry: CashbookEntry, finalized_at: datetime):
+        """Assigns the receipt number and links the entry into the hash chain; afterwards it is immutable."""
         prev_hash = self._last_cashbook_hash(session)
-        entry = CashbookEntry(receipt_number=self.get_next_receipt_number(session), **fields)
-        session.add(entry)
-        session.flush() # Get ID
+        entry.receipt_number = self.get_next_receipt_number(session)
+        entry.finalized_at = finalized_at
+        session.flush()
         entry.hash_chain = self._hash_record(self._cashbook_hash_payload(entry), prev_hash)
-        self._log(session, "Cashbook", entry.id, "Storno-Gegenbuchung" if entry.is_storno else "Created", user)
-        return entry
+        session.flush()
 
-    def add_cashbook_entry(self, entry_date: datetime, amount: float, description: str, category: str, entry_type: str, tax_percent: float, attachment_source: str = None, user: str = None) -> int:
+    @staticmethod
+    def _check_cashbook_input(amount: float, entry_type: str):
         if amount <= 0:
             raise ValueError("Der Betrag muss größer als 0 sein.")
         if entry_type not in CASHBOOK_TYPES:
             raise ValueError(f"Unbekannte Buchungsart: {entry_type}")
+
+    def _draft(self, session: Session, entry_id: int) -> CashbookEntry:
+        entry = session.get(CashbookEntry, entry_id)
+        if not entry:
+            raise GoBDError("Eintrag nicht gefunden.")
+        if entry.finalized_at:
+            raise GoBDError("Festgeschriebene Einträge können nicht mehr geändert werden. Bitte stornieren.")
+        return entry
+
+    def add_cashbook_entry(self, entry_date: datetime, amount: float, description: str, category: str, entry_type: str, tax_percent: float, attachment_source: str = None, user: str = None) -> int:
+        """Creates a draft entry; it stays editable until the cashbook is finalized."""
+        self._check_cashbook_input(amount, entry_type)
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
         if self.get_cashbook_balance() + signed < 0:
             raise ValueError("Der Kassenbestand darf nicht negativ werden!")
@@ -257,8 +276,7 @@ class DBController:
             attachment_path, attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR)
 
         with self.get_session() as session:
-            entry = self._add_cashbook_row(
-                session, user,
+            entry = CashbookEntry(
                 entry_date=entry_date,
                 amount=amount,
                 description=description or "Keine Angabe",
@@ -268,16 +286,70 @@ class DBController:
                 attachment_path=attachment_path,
                 attachment_hash=attachment_hash,
             )
+            session.add(entry)
+            session.flush()
+            self._log(session, "Cashbook", entry.id, "Created (Entwurf)", user)
             entry_id = entry.id
             self._commit(session, cashbook=[entry_id])
             return entry_id
 
+    def update_cashbook_entry(self, entry_id: int, entry_date: datetime, amount: float, description: str, entry_type: str, attachment_source: str = None, user: str = None):
+        """Changes a draft entry. attachment_source replaces the receipt; None keeps the current one."""
+        self._check_cashbook_input(amount, entry_type)
+        current = self.get_cashbook_entry(entry_id)
+        if current is None:
+            raise GoBDError("Eintrag nicht gefunden.")
+        signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
+        if self.get_cashbook_balance() - self.cashbook_signed_amount(current) + signed < 0:
+            raise ValueError("Der Kassenbestand darf nicht negativ werden!")
+
+        with self.get_session() as session:
+            entry = self._draft(session, entry_id)
+            if attachment_source:
+                entry.attachment_path, entry.attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR)
+            entry.entry_date = entry_date
+            entry.amount = amount
+            entry.description = description or "Keine Angabe"
+            entry.entry_type = entry_type
+            self._log(session, "Cashbook", entry_id, "Updated (Entwurf)", user)
+            self._commit(session, cashbook=[entry_id])
+
+    def delete_cashbook_entry(self, entry_id: int, user: str = None):
+        """Only drafts can be deleted; finalized entries are corrected by a reversing entry."""
+        current = self.get_cashbook_entry(entry_id)
+        if current is not None and self.get_cashbook_balance() - self.cashbook_signed_amount(current) < 0:
+            raise ValueError("Durch das Löschen würde der Kassenbestand negativ werden!")
+        with self.get_session() as session:
+            session.delete(self._draft(session, entry_id))
+            self._log(session, "Cashbook", entry_id, "Deleted (Entwurf)", user)
+            self._commit(session, cashbook=[entry_id])
+
+    def cashbook_draft_count(self) -> int:
+        return sum(1 for e in self._caches["cashbook"].by_id.values() if not e.finalized_at)
+
+    def finalize_cashbook(self, user: str = None) -> int:
+        """Seals all drafts in date order (receipt numbers, hash chain). Returns the number of sealed entries."""
+        with self.get_session() as session:
+            drafts = (session.query(CashbookEntry).filter(CashbookEntry.finalized_at == None)
+                      .order_by(CashbookEntry.entry_date, CashbookEntry.id).all())
+            if not drafts:
+                return 0
+            now = datetime.now()
+            for entry in drafts:
+                self._seal_cashbook_entry(session, entry, now)
+                self._log(session, "Cashbook", entry.id, f"Festgeschrieben als {entry.receipt_number}", user)
+            ids = [e.id for e in drafts]
+            self._commit(session, cashbook=ids)
+            return len(ids)
+
     def storno_cashbook_entry(self, entry_id: int, user: str = None) -> int:
-        """GoBD: entries are never changed or deleted; a correction is a reversing entry."""
+        """GoBD: finalized entries are never changed or deleted; a correction is a reversing entry."""
         with self.get_session() as session:
             original = session.get(CashbookEntry, entry_id)
             if not original:
                 raise GoBDError("Eintrag nicht gefunden.")
+            if not original.finalized_at:
+                raise GoBDError("Entwürfe werden nicht storniert, sondern bearbeitet oder gelöscht.")
             if original.is_storno:
                 raise GoBDError("Eine Storno-Buchung kann nicht erneut storniert werden.")
             if session.query(CashbookEntry).filter(CashbookEntry.storno_of_id == entry_id).count():
@@ -285,8 +357,7 @@ class DBController:
             if self.get_cashbook_balance() - self.cashbook_signed_amount(original) < 0:
                 raise ValueError("Durch die Stornierung würde der Kassenbestand negativ werden!")
 
-            entry = self._add_cashbook_row(
-                session, user,
+            entry = CashbookEntry(
                 entry_date=datetime.combine(datetime.now().date(), datetime.min.time()),
                 amount=-original.amount,
                 description=f"Storno zu {original.receipt_number}",
@@ -296,6 +367,11 @@ class DBController:
                 is_storno=True,
                 storno_of_id=original.id,
             )
+            session.add(entry)
+            session.flush()
+            # The reversing entry corrects sealed data and is therefore sealed immediately
+            self._seal_cashbook_entry(session, entry, datetime.now())
+            self._log(session, "Cashbook", entry.id, "Storno-Gegenbuchung", user)
             self._log(session, "Cashbook", original.id, f"Storniert durch {entry.receipt_number}", user)
             new_id = entry.id
             self._commit(session, cashbook=[new_id])
@@ -1005,7 +1081,9 @@ class DBController:
     def _verify(self, session: Session, check_files: bool) -> List[str]:
         problems = []
         prev = "GENESIS"
-        for entry in session.execute(select(CashbookEntry.__table__).order_by(CashbookEntry.id)):
+        cashbook = (select(CashbookEntry.__table__).where(CashbookEntry.finalized_at != None)
+                    .order_by(*self._cashbook_chain_order()))
+        for entry in session.execute(cashbook):
             if not entry.hash_chain or self._hash_record(self._cashbook_hash_payload(entry), prev) != entry.hash_chain:
                 problems.append(f"Kassenbuch: Eintrag {entry.receipt_number} wurde verändert oder die Kette ist unterbrochen.")
             if check_files and entry.attachment_path and not verify_file(entry.attachment_path, entry.attachment_hash):

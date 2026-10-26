@@ -143,7 +143,7 @@ class CashbookEntry(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     entry_date = Column(DateTime, nullable=False, index=True)
     amount = Column(Float, nullable=False)
-    receipt_number = Column(String, nullable=False, unique=True)
+    receipt_number = Column(String, unique=True) # assigned when the cashbook is finalized
     description = Column(String, nullable=False)
     category = Column(String)
     entry_type = Column(String, nullable=False) # Einnahme, Barentnahme Privat, Barentnahme Firma
@@ -154,6 +154,7 @@ class CashbookEntry(Base):
     attachment_path = Column(String)
     attachment_hash = Column(String)
     storno_of_id = Column(Integer)
+    finalized_at = Column(DateTime, index=True) # None = draft, still editable
 
 class IncomingInvoice(Base):
     __tablename__ = 'incoming_invoices'
