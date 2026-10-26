@@ -53,3 +53,23 @@ def controller(qapp, data_dir):
 def seller(controller):
     controller.set_settings(SELLER)
     return SELLER
+
+
+@pytest.fixture
+def window(controller, seller, monkeypatch):
+    import os
+    from PySide6.QtWidgets import QDialog, QFileDialog
+    from qfluentwidgets import MessageBox, MessageBoxBase
+    opened = []
+    monkeypatch.setattr(os, "startfile", lambda *a, **k: opened.append(a), raising=False)
+    monkeypatch.setattr(MessageBox, "exec", lambda self: 1)
+    monkeypatch.setattr(MessageBoxBase, "exec", lambda self: 1)
+    monkeypatch.setattr(QDialog, "exec", lambda self: 1)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda parent, caption, path, flt="": (path, "")))
+    from src.views.main_window import MainWindow
+    w = MainWindow(controller)
+    w.resize(1400, 900)
+    w.show()
+    w.opened = opened
+    yield w
+    w.hide()
