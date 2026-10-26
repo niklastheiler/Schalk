@@ -21,10 +21,10 @@ class QuoteListPage(ListPage):
         self.interface = interface
         self.c = c = interface.db_controller
         columns = [
-            Column("Datum", lambda q: fmt_date(q.quote_date), sort=lambda q: _naive(q.quote_date), width=100),
-            Column("Angebotsnummer", lambda q: q.quote_number, width=160),
+            Column("Datum", lambda q: fmt_date(q.quote_date), sort=lambda q: (_naive(q.quote_date), q.id), width=100, descending=True),
+            Column("Angebotsnummer", lambda q: q.quote_number, width=160, descending=True),
             Column("Kunde", c.customer_display_name),
-            Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT),
+            Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT, descending=True),
             Column("Status", lambda q: q.status + (" (archiviert)" if q.archived_at else ""), width=170),
         ]
         super().__init__("Angebote", columns, (SignalBus.get().quotesChanged, SignalBus.get().customersChanged),

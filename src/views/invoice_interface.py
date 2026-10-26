@@ -44,11 +44,11 @@ class InvoiceListPage(ListPage):
         c = interface.db_controller
         self.c = c
         columns = [
-            Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: _naive(i.invoice_date), width=100),
-            Column("Rechnungsnummer", self._number_text, width=180),
+            Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: (_naive(i.invoice_date), i.id), width=100, descending=True),
+            Column("Rechnungsnummer", self._number_text, width=180, descending=True),
             Column("Kunde", c.customer_display_name),
-            Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT),
-            Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i), width=110),
+            Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT, descending=True),
+            Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i) if self._due_text(i) else None, width=110),
             Column("Status", lambda i: i.status, width=120),
         ]
         super().__init__("Rechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),

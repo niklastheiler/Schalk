@@ -17,11 +17,11 @@ class CashbookInterface(ListPage):
         self.attachment_path = ""
         self._cancelled = set()
         columns = [
-            Column("Datum", lambda e: fmt_date(e.entry_date), sort=lambda e: (e.entry_date, e.id), width=100),
-            Column("Beleg-Nr", lambda e: e.receipt_number, width=130),
+            Column("Datum", lambda e: fmt_date(e.entry_date), sort=lambda e: (e.entry_date, e.id), width=100, descending=True),
+            Column("Beleg-Nr", lambda e: e.receipt_number, width=130, descending=True),
             Column("Art", lambda e: e.entry_type + (" (Storno)" if e.is_storno else ""), width=190),
             Column("Beschreibung", lambda e: e.description or ""),
-            Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, align=RIGHT),
+            Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, align=RIGHT, descending=True),
             Column("GoBD-Hash", lambda e: f"{e.hash_chain[:8]}…{e.hash_chain[-8:]}" if e.hash_chain else "Kein Hash", width=170),
             Column("Beleg", lambda e: "Vorhanden" if e.attachment_path else "-", width=90),
         ]

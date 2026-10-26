@@ -2,6 +2,8 @@
 Building blocks shared by all pages: virtual table model (no widgets per row, so tens of
 thousands of records stay fluid), filter proxy, list page base class and message helpers.
 """
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
@@ -64,9 +66,19 @@ def show_message(parent, title: str, text: str):
 class Column:
     title: str
     text: Callable[[Any], str]
-    sort: Optional[Callable[[Any], Any]] = None
+    sort: Optional[Callable[[Any], Any]] = None # sort key; default: natural order of the displayed text
     width: Optional[int] = None # None = stretch
     align: Qt.AlignmentFlag = Qt.AlignLeft | Qt.AlignVCenter
+    descending: bool = False # direction of the first click on the column header (newest/largest first)
+
+
+_NUMBER_RE = re.compile(r"(\d+)")
+
+
+def natural_key(text: str) -> tuple:
+    """Case- and umlaut-insensitive with numbers compared by value: 'K2026-9' < 'K2026-10', 'ä' sorts like 'a'."""
+    plain = "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)).casefold()
+    return tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in _NUMBER_RE.split(plain) if part)
 
 
 class RecordTableModel(QAbstractTableModel):
@@ -97,19 +109,23 @@ class RecordTableModel(QAbstractTableModel):
         self._sort_column, self._sort_order = column, order
         self.set_rows(self._rows)
 
+    @property
+    def sort_state(self):
+        return self._sort_column, self._sort_order
+
     def _sorted(self, rows) -> list:
         if self._sort_column is None:
             return list(rows)
         column = self.columns[self._sort_column]
-        key = column.sort or column.text
-
-        def safe_key(record):
-            value = key(record)
-            return (value is None, value if value is not None else 0)
-        try:
-            return sorted(rows, key=safe_key, reverse=self._sort_order == Qt.DescendingOrder)
-        except TypeError:
-            return sorted(rows, key=lambda r: str(key(r)), reverse=self._sort_order == Qt.DescendingOrder)
+        if column.sort:
+            keyed = [(column.sort(r), r) for r in rows]
+        else:
+            keyed = [(natural_key(column.text(r) or ""), r) for r in rows]
+        # Empty values always go to the end, whatever the direction
+        filled = [(k, r) for k, r in keyed if k not in (None, "", ())]
+        empty = [r for k, r in keyed if k in (None, "", ())]
+        filled.sort(key=lambda kr: kr[0], reverse=self._sort_order == Qt.DescendingOrder)
+        return [r for _, r in filled] + empty
 
     def record(self, row: int):
         return self._rows[row]
@@ -235,8 +251,7 @@ class ListPage(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionsClickable(True)
         header.setSortIndicatorShown(True)
-        header.setSortIndicator(-1, Qt.AscendingOrder)
-        header.sortIndicatorChanged.connect(self.model.sort)
+        header.sectionClicked.connect(self._on_header_clicked)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -257,6 +272,22 @@ class ListPage(QWidget):
 
         for signal in change_signals:
             signal.connect(self.mark_dirty)
+
+        # Initial order: first column in its natural direction (lists with a date: newest first)
+        self._set_sort(0, Qt.DescendingOrder if columns[0].descending else Qt.AscendingOrder)
+
+    # --- Sorting ---
+    def _on_header_clicked(self, column: int):
+        current_column, current_order = self.model.sort_state
+        if column == current_column:
+            order = Qt.AscendingOrder if current_order == Qt.DescendingOrder else Qt.DescendingOrder
+        else:
+            order = Qt.DescendingOrder if self.model.columns[column].descending else Qt.AscendingOrder
+        self._set_sort(column, order)
+
+    def _set_sort(self, column: int, order):
+        self.table.horizontalHeader().setSortIndicator(column, order)
+        self.model.sort(column, order)
 
     # --- To implement ---
     def records(self) -> list:
