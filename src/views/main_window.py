@@ -12,6 +12,7 @@ from src.views.invoice_interface import InvoiceInterface
 from src.views.quote_interface import QuoteInterface
 from src.views.reminder_interface import ReminderInterface
 from src.views.settings_interface import SettingsInterface
+from src.views.update_notifier import UpdateNotifier
 
 
 class MainWindow(FluentWindow):
@@ -43,6 +44,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
 
+        self.updates = UpdateNotifier(self)
         SignalBus.get().saveFailed.connect(self._on_save_failed)
         # Overdue invoices are re-evaluated hourly so a long running session stays correct
         self._overdue_timer = QTimer(self, interval=60 * 60 * 1000)
@@ -88,4 +90,6 @@ class MainWindow(FluentWindow):
                                                  "Bitte freien Speicherplatz und Zugriffsrechte prüfen und erneut schließen.")
             event.ignore()
             return
+        # Only after everything is saved: a downloaded update replaces the program files once Schalk has exited
+        self.updates.install_on_exit()
         super().closeEvent(event)

@@ -60,6 +60,7 @@ def main():
     window = MainWindow(db_controller)
     window.showMaximized()
     window.check_integrity_on_startup()
+    window.updates.start()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 
     exit_code = app.exec()
