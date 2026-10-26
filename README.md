@@ -6,6 +6,10 @@ Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 10/1
 
 Unter [Releases](https://github.com/niklastheiler/Schalk/releases) die aktuelle `Schalk-vX.Y-windows-x64.zip` herunterladen, entpacken und `Schalk\Schalk.exe` starten. Eine Python-Installation ist nicht nötig. Was sich zwischen den Versionen geändert hat, steht im [Changelog](CHANGELOG.md).
 
+### Automatische Updates
+
+Ab Version 1.2 prüft Schalk bei jedem Start im Hintergrund, ob es auf GitHub ein neueres Release gibt. Ist eines da, erscheint ein kurzer Hinweis, und das Update wird im Hintergrund heruntergeladen und per SHA-256 geprüft. Danach fragt Schalk, ob es jetzt neu starten soll. Beim Neustart (oder sonst beim nächsten Schließen) werden die Programmdateien ersetzt. Die Daten in `%LOCALAPPDATA%\Schalk` bleiben unberührt. Voraussetzung: Der Programmordner ist beschreibbar, also z. B. nicht unter `C:\Programme`. Sonst weist Schalk nur auf das neue Release hin. Beim Start aus dem Quellcode wird nichts aktualisiert.
+
 ## Start aus dem Quellcode
 
 Voraussetzung: **Python 3.14** (64 Bit) von python.org. Python 3.15 wird noch nicht unterstützt, weil Saxon-HE (EN-16931-Prüfung) dafür noch kein Paket anbietet.
