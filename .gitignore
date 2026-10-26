@@ -1,4 +1,9 @@
+__pycache__/
+venv/
+build/
+dist/
+*.spec
+.pytest_cache/
 error.log
 schalk.enc.db
-__pycache__
-venv
+schalk.key
