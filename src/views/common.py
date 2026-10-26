@@ -10,11 +10,11 @@ from typing import Any, Callable, List, Optional
 from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
-from PySide6.QtWidgets import QStyledItemDelegate
-from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
                             RoundMenu, SearchLineEdit, SubtitleLabel, TableView)
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets.components.widgets.table_view import TableItemDelegate
+from PySide6.QtWidgets import QStyledItemDelegate
 
 RECORD_ROLE = Qt.UserRole + 1
 
