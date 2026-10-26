@@ -1,6 +1,7 @@
 import hashlib
 import json
 import io
+import os
 import pytest
 from src.utils import updater
 
@@ -73,12 +74,23 @@ def test_installed_versions_are_cleaned_up(update_dir):
     assert [p.name for p in update_dir.iterdir()] == ["Schalk-Setup-v1.3.exe"]
 
 
-def test_apply_script_waits_then_runs_setup_elevated():
-    script = updater.build_apply_script(r"C:\U\Schalk-Setup-v1.2.exe", 4711, restart=True)
-    assert 'PID eq 4711' in script
-    assert r"Start-Process -FilePath 'C:\U\Schalk-Setup-v1.2.exe'" in script and "-Verb RunAs" in script
-    assert "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /STARTAPP=1" in script
-    assert "/STARTAPP=0" in updater.build_apply_script("s", 1, restart=False)
+def test_setup_arguments():
+    assert updater.setup_arguments(True).startswith("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /STARTAPP=1")
+    assert "/STARTAPP=0" in updater.setup_arguments(False) and "/LOG=" in updater.setup_arguments(False)
+
+
+def test_database_is_backed_up_before_update(tmp_path, monkeypatch):
+    db, key = tmp_path / "schalk.enc.db", tmp_path / "schalk.key"
+    db.write_bytes(b"db"); key.write_bytes(b"key")
+    monkeypatch.setattr(updater.paths, "DB_PATH", str(db))
+    monkeypatch.setattr(updater.paths, "KEY_PATH", str(key))
+    monkeypatch.setattr(updater, "BACKUP_DIR", str(tmp_path / "backups"))
+    for i in range(7):
+        (tmp_path / "backups" / f"vor-update-1.0-2020010{i}-000000").mkdir(parents=True)
+    target = updater.backup_database("1.3")
+    assert sorted(os.listdir(target)) == ["schalk.enc.db", "schalk.key"]
+    assert open(os.path.join(target, "schalk.enc.db"), "rb").read() == b"db"
+    assert len(os.listdir(tmp_path / "backups")) == updater.BACKUPS_KEPT and os.path.isdir(target)
 
 
 def test_source_checkout_never_updates(window):

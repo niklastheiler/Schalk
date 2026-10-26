@@ -3,21 +3,23 @@ Automatic updates from GitHub releases.
 
 Schalk is installed with Schalk-Setup (into C:\\Program Files\\Schalk). On every start the latest release
 is looked up. If it is newer, its setup is downloaded and verified against the SHA-256 digest GitHub
-publishes for every release asset. After Schalk has exited, a small script runs the setup silently with
-administrator rights (Windows asks once via UAC); the setup replaces the program files and starts the
+publishes for every release asset. When Schalk exits, the database is backed up and the setup runs silently
+with administrator rights (Windows asks once via UAC); the setup replaces the program files and starts the
 new version. User data lives in %LOCALAPPDATA%\\Schalk and is not touched. Only the installed EXE updates
 itself; a source checkout (python run.py) is never modified.
 """
+import ctypes
 import hashlib
 import json
 import logging
 import os
 import re
-import subprocess
+import shutil
 import sys
 import tempfile
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 from src.utils import paths
 from src.version import APP_VERSION
@@ -27,9 +29,11 @@ logger = logging.getLogger(__name__)
 REPOSITORY = "niklastheiler/Schalk"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 SETUP_PATTERN = re.compile(r"Schalk-Setup-v(?P<version>[\d.]+)\.exe")
-SETUP_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+SETUP_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS"
 UPDATE_DIR = os.path.join(paths.DATA_DIR, "updates")
-APPLY_SCRIPT = os.path.join(UPDATE_DIR, "apply_update.cmd")
+SETUP_LOG = os.path.join(UPDATE_DIR, "setup.log")
+BACKUP_DIR = os.path.join(paths.DATA_DIR, "backups")
+BACKUPS_KEPT = 5
 TIMEOUT = 30
 
 
@@ -147,28 +151,38 @@ def download(release: Release, progress=None) -> str:
     return target
 
 
-def build_apply_script(setup: str, pid: int, restart: bool) -> str:
+def backup_database(version: str) -> str:
     """
-    Waits for Schalk (pid) to exit, then runs the setup silently with administrator rights. /STARTAPP=1
-    makes the setup start the new version afterwards. If the user declines the UAC prompt nothing changes
-    and the update is offered again on the next start.
+    Copies the encrypted database and its key before an update (the database is closed at this point).
+    The newest BACKUPS_KEPT copies are kept in %LOCALAPPDATA%\\Schalk\\backups.
     """
-    arguments = f"{SETUP_ARGS} /STARTAPP={1 if restart else 0}"
-    return "\r\n".join([
-        "@echo off",
-        ":wait",
-        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto wait)',
-        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process -FilePath '{setup}' "
-        f"-ArgumentList '{arguments}' -Verb RunAs\"",
-        'del "%~f0" & exit /b 0',
-        "",
-    ])
+    target = os.path.join(BACKUP_DIR, f"vor-update-{version}-{datetime.now():%Y%m%d-%H%M%S}")
+    os.makedirs(target)
+    for path in (paths.DB_PATH, paths.KEY_PATH):
+        if os.path.isfile(path):
+            shutil.copy2(path, target)
+    old = sorted(name for name in os.listdir(BACKUP_DIR) if name.startswith("vor-update-"))
+    for name in old[:-BACKUPS_KEPT]:
+        shutil.rmtree(os.path.join(BACKUP_DIR, name), ignore_errors=True)
+    return target
+
+
+def setup_arguments(restart: bool) -> str:
+    """/STARTAPP=1 makes the setup start the new version afterwards; the log helps if an update fails."""
+    return f'{SETUP_ARGS} /STARTAPP={1 if restart else 0} /LOG="{SETUP_LOG}"'
 
 
 def apply_on_exit(version: str, restart: bool):
-    """Starts the installer script detached; it waits until this process has exited."""
-    with open(APPLY_SCRIPT, "w", encoding="ascii", errors="replace") as f:
-        f.write(build_apply_script(staged_setup(version), os.getpid(), restart))
-    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-    subprocess.Popen(["cmd.exe", "/c", APPLY_SCRIPT], creationflags=flags, close_fds=True, cwd=UPDATE_DIR)
-    logger.info("Update auf %s wird nach dem Beenden installiert (Neustart: %s)", version, restart)
+    """
+    Called while Schalk exits, after the database is closed: backs up the database, then starts the setup
+    with administrator rights (Windows asks once). The setup closes the remaining Schalk process, replaces the
+    program files and starts the new version. If the UAC prompt is declined, nothing changes and the update is
+    offered again on the next start.
+    """
+    backup = backup_database(version)
+    logger.info("Datenbank vor dem Update gesichert: %s", backup)
+    setup = staged_setup(version)
+    result = ctypes.windll.shell32.ShellExecuteW(None, "runas", setup, setup_arguments(restart), UPDATE_DIR, 1)
+    if result <= 32: # ShellExecute reports errors as values up to 32 (e.g. 5 = declined or no rights)
+        raise OSError(f"Setup konnte nicht gestartet werden (Fehler {result})")
+    logger.info("Update auf %s gestartet (Neustart: %s)", version, restart)
