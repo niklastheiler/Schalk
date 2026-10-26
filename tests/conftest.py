@@ -8,6 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest
+import shiboken6
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 
 from src.utils import paths
@@ -17,6 +19,26 @@ from einvoice_cases import SELLER
 @pytest.fixture(scope="session")
 def qapp():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def _delete_windows():
+    """
+    Deletes the windows of each test right after it. Windows piling up until the interpreter exits
+    make Qt crash on Windows while tearing them down (access violation after the last test).
+    Only hidden, not closed: MainWindow.closeEvent closes the database, the controller fixture does that.
+    """
+    yield
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        # Popups (menus) owned by another widget may already be gone together with their owner
+        if shiboken6.isValid(widget):
+            widget.hide()
+            widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 @pytest.fixture

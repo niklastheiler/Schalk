@@ -11,8 +11,9 @@ call venv\Scripts\activate.bat || goto :error
 python -m pip install --upgrade pip || goto :error
 python -m pip install -r requirements-dev.txt || goto :error
 
+rem "neq 0" instead of "errorlevel 1": a crash returns a negative exit code
 python -m pytest -q tests
-if errorlevel 1 (
+if %errorlevel% neq 0 (
     echo Tests fehlgeschlagen ^(Exitcode %errorlevel%^)
     goto :error
 )
@@ -26,7 +27,7 @@ pyinstaller --noconfirm --clean --windowed --name Schalk ^
     --collect-data qfluentwidgets ^
     --add-data "src\resources;src\resources" ^
     run.py
-if errorlevel 1 (
+if %errorlevel% neq 0 (
     echo PyInstaller fehlgeschlagen ^(Exitcode %errorlevel%^)
     goto :error
 )
