@@ -10,12 +10,12 @@ updates:
     open-pull-requests-limit: 5
     groups:
       # These must always have exactly the same version, otherwise Qt does not start
-      # Dependabot compares normalized names (lowercase, "-" instead of "_"): pyside6-addons, pyside6-essentials
+      # Dependabot matched "PySide6" but not "PySide6_Addons" (it normalizes to pyside6-addons), so both spellings
       pyside6:
-        patterns: ["pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"]
+        patterns: ["pyside6", "pyside6-addons", "pyside6_addons", "pyside6-essentials", "pyside6_essentials", "shiboken6"]
       python-packages:
         patterns: ["*"]
-        exclude-patterns: ["pyside6", "pyside6-addons", "pyside6-essentials", "shiboken6"]
+        exclude-patterns: ["pyside6", "pyside6-addons", "pyside6_addons", "pyside6-essentials", "pyside6_essentials", "shiboken6"]
 
   - package-ecosystem: github-actions
     directory: "/"
