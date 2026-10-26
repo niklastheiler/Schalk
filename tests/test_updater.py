@@ -111,3 +111,28 @@ def test_restart_now_saves_and_installs_with_restart(window, qapp, monkeypatch):
     window.updates.ready.emit("1.2")
     qapp.processEvents()
     assert applied == [("1.2", True)] and window.db_controller.db._closed
+
+
+def test_manual_check_reports_up_to_date(window, qapp, monkeypatch):
+    from qfluentwidgets import InfoBar
+    shown = []
+    monkeypatch.setattr(updater, "is_installed", lambda: True)
+    monkeypatch.setattr(updater, "find_update", lambda: None)
+    monkeypatch.setattr(InfoBar, "info", lambda **kw: shown.append(kw["content"]))
+    monkeypatch.setattr(window.updates, "_start_check", lambda manual: window.updates._check_and_download(manual))
+    window.settings_interface.updateBtn.click()
+    qapp.processEvents()
+    assert shown and "ist aktuell" in shown[0] and not window.updates.checking
+
+
+def test_manual_check_reports_errors(window, qapp, monkeypatch):
+    from qfluentwidgets import InfoBar
+    shown = []
+    def offline():
+        raise OSError("keine Verbindung")
+    monkeypatch.setattr(updater, "is_installed", lambda: True)
+    monkeypatch.setattr(updater, "find_update", offline)
+    monkeypatch.setattr(InfoBar, "info", lambda **kw: shown.append(kw["content"]))
+    window.updates._check_and_download(manual=True)
+    qapp.processEvents()
+    assert shown == ["Update-Prüfung fehlgeschlagen: keine Verbindung"]

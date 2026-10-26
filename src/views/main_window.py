@@ -45,6 +45,7 @@ class MainWindow(FluentWindow):
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
 
         self.updates = UpdateNotifier(self)
+        self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
         SignalBus.get().saveFailed.connect(self._on_save_failed)
         # Overdue invoices are re-evaluated hourly so a long running session stays correct
         self._overdue_timer = QTimer(self, interval=60 * 60 * 1000)
