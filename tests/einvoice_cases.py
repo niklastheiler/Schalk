@@ -5,6 +5,12 @@ that can be checked with external validators (KoSIT, Mustang, veraPDF).
 from datetime import datetime, timezone
 
 DAY = datetime(2026, 10, 1, tzinfo=timezone.utc)
+SELLER = {
+    "company_name": "Test & Söhne GmbH", "first_name": "Max", "last_name": "Muster", "address": "Hauptstr. 1",
+    "postal_code": "10115", "city": "Berlin", "tax_id": "12/345/67890", "vat_id": "DE100000008",
+    "email": "info@test.de", "phone": "030 123456", "iban": "DE02120300000000202051", "bic": "BYLADEM1001",
+    "bank_name": "Bank", "payment_terms_days": "14",
+}
 DOMESTIC = dict(company_name="Kunde AG", address="Weg 2", postal_code="20095", city="Hamburg", email="buchhaltung@kunde.de")
 
 
