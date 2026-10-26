@@ -76,3 +76,9 @@ python -m pytest tests
 ## Autor
 
 Niklas Theiler. Die Version steht in `src/version.py` und unter Einstellungen → Sicherheit & GoBD → Über Schalk.
+
+## Lizenz
+
+Der Quellcode von Schalk steht unter der [MIT-Lizenz](LICENSE).
+
+Verwendete Bibliotheken haben eigene Lizenzen. Wichtig für die fertige EXE: [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) steht unter der GPLv3, deshalb gelten für die gebündelte Programmdatei auch deren Bedingungen. PySide6/Qt steht unter der LGPLv3, Saxon-HE unter der MPL 2.0, das Raketen-Symbol stammt aus [Lucide](https://lucide.dev) (ISC).
