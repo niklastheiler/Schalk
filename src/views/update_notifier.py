@@ -92,7 +92,7 @@ class UpdateNotifier(QObject):
         self.pending_version = version
         box = MessageBox(f"Update auf Version {version} bereit",
                          "Das Update ist heruntergeladen. Für die Installation startet Schalk neu, Windows fragt dabei einmal "
-                         "nach der Berechtigung. Deine Daten bleiben unverändert.\n\nBei „Später“ wird das Update beim nächsten Schließen installiert.",
+                         "nach der Berechtigung. Vorher wird die Datenbank gesichert, deine Daten bleiben unverändert.\n\nBei „Später“ wird das Update beim nächsten Schließen installiert.",
                          self.window)
         box.yesButton.setText("Jetzt neu starten")
         box.cancelButton.setText("Später")

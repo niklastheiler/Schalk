@@ -54,7 +54,7 @@ Name: "{autodesktop}\Schalk"; Filename: "{app}\Schalk.exe"; Tasks: desktopicon
 ; Interactive installation: offer to start Schalk at the end
 Filename: "{app}\Schalk.exe"; Description: "{cm:LaunchProgram,Schalk}"; Flags: nowait postinstall skipifsilent
 ; Silent update from within Schalk (/STARTAPP=1): start the new version afterwards
-Filename: "{app}\Schalk.exe"; Flags: nowait; Check: StartAfterUpdate
+Filename: "{app}\Schalk.exe"; Flags: nowait runasoriginaluser; Check: StartAfterUpdate
 
 [Code]
 function StartAfterUpdate: Boolean;
