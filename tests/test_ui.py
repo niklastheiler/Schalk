@@ -16,7 +16,7 @@ def test_invoice_workflow(window, controller, qapp):
     ii.show_editor()
     ed = ii.editor
     for edit, text in ((ed.companyEdit, "Neukunde KG"), (ed.addressEdit, "Allee 5"), (ed.postalCodeEdit, "80331"),
-                       (ed.cityEdit, "München"), (ed.emailEdit, "rechnung@neukunde.de")):
+                       (ed.cityEdit, "München")):
         edit.setText(text)
     ed.add_item_row()
     ed.table.cellWidget(0, 0).setText("Leistung")
@@ -43,6 +43,8 @@ def test_invoice_workflow(window, controller, qapp):
     assert c.is_finalized(invoice) and ii.list_page.model.text(0, 1) == invoice.invoice_number
     assert "Stornieren" in _menu_texts(ii.list_page, c.get_invoices()[0])
     ii.save_pdf(invoice.id)
+    # E-mail (needed for XRechnung) is maintained in the customer master, not in the invoice form
+    c.update_customer(invoice.customer_id, email="rechnung@neukunde.de")
     ii.export_xrechnung(invoice.id)
     ii.print_pdf(invoice.id)
     assert window.opened[-1][1] == "print"

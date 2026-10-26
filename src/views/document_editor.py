@@ -99,8 +99,6 @@ class DocumentEditor(QWidget):
         self.addressEdit = self._line_edit("Straße und Hausnummer", customerForm)
         self.postalCodeEdit = self._line_edit("PLZ", customerForm)
         self.cityEdit = self._line_edit("Ort", customerForm)
-        self.emailEdit = self._line_edit("E-Mail (für E-Rechnung)", customerForm)
-        self.vatIdEdit = self._line_edit("USt-IdNr. des Kunden (optional)", customerForm)
         for edit in (self.companyEdit, self.nameEdit):
             edit.textChanged.connect(self._update_customer_hint)
 
@@ -223,8 +221,6 @@ class DocumentEditor(QWidget):
         self.addressEdit.setText(customer.address or "")
         self.postalCodeEdit.setText(customer.postal_code or "")
         self.cityEdit.setText(customer.city or "")
-        self.emailEdit.setText(customer.email or "")
-        self.vatIdEdit.setText(customer.vat_id or "")
         self._update_customer_hint()
 
     def _save_customer(self) -> int:
@@ -236,8 +232,6 @@ class DocumentEditor(QWidget):
             address=self.addressEdit.text().strip(),
             postal_code=self.postalCodeEdit.text().strip(),
             city=self.cityEdit.text().strip(),
-            email=self.emailEdit.text().strip(),
-            vat_id=self.vatIdEdit.text().strip(),
         )
         customer = self._selected_customer()
         if customer:
@@ -253,7 +247,7 @@ class DocumentEditor(QWidget):
         self.set_read_only(False)
         self.titleLabel.setText(self.NEW_TITLE)
         for edit in (self.customerSearch, self.companyEdit, self.nameEdit, self.addressEdit, self.postalCodeEdit,
-                     self.cityEdit, self.emailEdit, self.vatIdEdit):
+                     self.cityEdit):
             edit.clear()
         self.exemptionEdit.setText(SMALL_BUSINESS_REASON if self.db_controller.is_small_business() else "")
         self.table.setRowCount(0)
@@ -276,7 +270,7 @@ class DocumentEditor(QWidget):
         self.saveBtn.setVisible(not read_only)
         self.addItemBtn.setVisible(not read_only)
         for edit in (self.customerSearch, self.companyEdit, self.nameEdit, self.addressEdit, self.postalCodeEdit,
-                     self.cityEdit, self.emailEdit, self.vatIdEdit, self.exemptionEdit):
+                     self.cityEdit, self.exemptionEdit):
             edit.setEnabled(not read_only)
         self.set_document_fields_enabled(not read_only)
         for row in range(self.table.rowCount()):

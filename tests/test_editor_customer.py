@@ -51,3 +51,14 @@ def test_typing_in_the_search_field_deselects_the_customer(controller, qapp):
     _choose(editor, "Bestandskunde AG")
     editor.customerSearch.textEdited.emit("Ganz anderer Kunde")
     assert editor.customer_id is None
+
+
+def test_invoice_form_keeps_email_and_vat_id_of_the_customer(controller, qapp):
+    customer_id = controller.add_customer(company_name="Bestandskunde AG", city="Berlin", email="rechnung@kunde.de", vat_id="ATU12345678")
+    editor = _editor(controller)
+    assert not hasattr(editor, "emailEdit") and not hasattr(editor, "vatIdEdit")
+    _choose(editor, "Bestandskunde AG")
+    editor.cityEdit.setText("Hamburg")
+    editor.save()
+    customer = controller.get_customer(customer_id)
+    assert (customer.city, customer.email, customer.vat_id) == ("Hamburg", "rechnung@kunde.de", "ATU12345678")
