@@ -40,6 +40,10 @@ jobs:
       - name: ZIP und Release-Text erstellen
         shell: pwsh
         run: |
+          # The official validation rules must be part of the EXE, otherwise the XRechnung export fails
+          foreach ($rules in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt") {
+            if (-not (Test-Path "dist/Schalk/_internal/src/resources/$rules")) { throw "Prüfregeln fehlen in der EXE: $rules" }
+          }
           Copy-Item LICENSE dist/Schalk/LICENSE.txt
           Compress-Archive -Path dist/Schalk -DestinationPath "Schalk-$env:TAG-windows-x64.zip"
           # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
