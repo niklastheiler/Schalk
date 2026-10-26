@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+
+- Button „Nach Update suchen“ unter Einstellungen → Sicherheit & GoBD, zeigt das Ergebnis der Prüfung an
+- Updates werden nach dem Download zuverlässig installiert; vorher werden Datenbank und Schlüssel nach %LOCALAPPDATA%\Schalk\backups gesichert (die letzten 5 bleiben)
+- Umstieg von 1.2.x: das Setup von 1.2.3 einmal von Hand installieren, danach aktualisiert sich Schalk selbst
+
 ## 1.2.2
 
 - Eigenes Programm-Logo in Rot, Schwarz und Weiß für EXE, Setup, Verknüpfungen und Programmfenster
