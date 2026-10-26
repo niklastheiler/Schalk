@@ -49,7 +49,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 
 ## E-Rechnung
 
-**Ausgang.** Jede festgeschriebene Rechnung wird als **ZUGFeRD/Factur-X (Profil EN 16931)** erzeugt: ein PDF/A-3 mit eingebettetem XML, eingebetteten Schriften und GiroCode. Vor dem Festschreiben wird geprüft:
+**Ausgang.** Jede festgeschriebene Rechnung wird als **ZUGFeRD/Factur-X (Profil EN 16931)** erzeugt: ein PDF/A-3 mit eingebettetem XML und eingebetteten Schriften. Vor dem Festschreiben wird geprüft:
 - die Pflichtangaben nach § 14 UStG
 - die Regeln der EN 16931 (offizielles Schematron, über Saxon-HE)
 

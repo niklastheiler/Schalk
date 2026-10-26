@@ -64,7 +64,6 @@ def test_einvoice_pdf_is_valid_pdfa3_with_en16931_xml(controller, seller):
     assert "/OutputIntents" in root and "/AF" in root and reader.pdf_header == "%PDF-1.7"
     for font in reader.pages[0]["/Resources"]["/Font"].values():
         assert "/FontFile2" in font.get_object()["/FontDescriptor"].get_object()
-    assert "GiroCode" in reader.pages[0].extract_text()
     broken = re.sub(rb'(<ram:GrandTotalAmount[^>]*>)[^<]+', rb'\g<1>999.99', xml)
     assert broken != xml
     assert any("BR-CO-15" in p for p in validate_en16931(broken))

@@ -12,9 +12,6 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.fonts import addMapping
-from reportlab.graphics.barcode.qr import QrCodeWidget
-from reportlab.graphics import shapes
-from reportlab.graphics.shapes import Drawing
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from src.controllers.db_controller import DBController
 from src.models.database import Invoice
@@ -35,9 +32,8 @@ def _register_fonts():
     addMapping(FONT, 1, 0, FONT_BOLD)
     addMapping(FONT, 0, 1, "Vera-Italic")
     addMapping(FONT, 1, 1, "Vera-BoldItalic")
-    # The canvas and the graphics renderer (GiroCode) start with these fonts; they must be embedded as well
+    # The canvas starts with this font; it must be embedded as well
     reportlab.rl_config.canvas_basefontname = FONT
-    shapes.STATE_DEFAULTS["fontName"] = FONT
 
 
 @lru_cache(maxsize=1)
@@ -49,22 +45,6 @@ def _styles():
     styles.add(ParagraphStyle(name='Small', parent=styles['Normal'], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name='Cell', parent=styles['Normal'], fontSize=9, leading=11))
     return styles
-
-
-def girocode(seller: dict, amount: float, reference: str):
-    """EPC-QR-Code (GiroCode) for SEPA transfers; scanned by banking apps. None if no IBAN."""
-    iban = (seller.get("iban") or "").replace(" ", "")
-    if not iban or amount <= 0:
-        return None
-    name = (seller.get("account_holder") or seller.get("company_name") or "")[:70]
-    payload = "\n".join(["BCD", "002", "1", "SCT", (seller.get("bic") or "").replace(" ", ""), name, iban,
-                         f"EUR{amount:.2f}", "", "", reference[:140]])
-    widget = QrCodeWidget(payload, barLevel="M")
-    x1, y1, x2, y2 = widget.getBounds()
-    size = 28 * mm
-    drawing = Drawing(size, size, transform=[size / (x2 - x1), 0, 0, size / (y2 - y1), 0, 0])
-    drawing.add(widget)
-    return drawing
 
 
 def fmt_money(value: float) -> str:
@@ -237,16 +217,8 @@ class PDFGenerator:
         else:
             due = self.db_controller.get_due_date(invoice)
             terms = self.db_controller.payment_terms_of(invoice)
-            payment_text = self._p(f"Bitte überweisen Sie den Betrag innerhalb von {terms} Tagen ohne Abzug bis zum "
-                                   f"{due.strftime('%d.%m.%Y')} unter Angabe der Rechnungsnummer.")
-            qr = None if is_draft else girocode(seller, invoice.gross_amount, f"Rechnung {invoice.invoice_number}")
-            if qr:
-                block = Table([[payment_text, [qr, self._p("GiroCode", 'Small')]]], colWidths=[140 * mm, 30 * mm])
-                block.setStyle(TableStyle([('FONTNAME', (0, 0), (-1, -1), FONT), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                                           ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
-                elements.append(block)
-            else:
-                elements.append(payment_text)
+            elements.append(self._p(f"Bitte überweisen Sie den Betrag innerhalb von {terms} Tagen ohne Abzug bis zum "
+                                    f"{due.strftime('%d.%m.%Y')} unter Angabe der Rechnungsnummer."))
 
         self._bank_info(elements, seller)
         doc.build(elements)
