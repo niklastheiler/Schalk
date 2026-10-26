@@ -50,8 +50,8 @@ def version_key(version: str) -> tuple:
     return tuple(parts)
 
 
-def is_newer(candidate: str, current: str = APP_VERSION) -> bool:
-    return version_key(candidate) > version_key(current)
+def is_newer(candidate: str, current: Optional[str] = None) -> bool:
+    return version_key(candidate) > version_key(current or APP_VERSION)
 
 
 def is_installed() -> bool:
