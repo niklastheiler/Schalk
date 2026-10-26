@@ -100,7 +100,7 @@ class CashbookInterface(ListPage):
             notify_error(self, "Fehler", "Beleg-Datei nicht gefunden.")
 
     def attach_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", "", "Dokumente (*.pdf *.png *.jpg *.jpeg *.xml)")
+        path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "Dokumente (*.pdf *.png *.jpg *.jpeg *.xml)")
         if path:
             self.attachment_path = path
             self.attachLabel.setText(os.path.basename(path))

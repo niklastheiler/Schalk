@@ -152,7 +152,7 @@ class IncomingInvoiceInterface(ListPage):
                 notify_success(self, "Storniert", "Rechnung storniert.")
 
     def upload(self):
-        filepaths, _ = QFileDialog.getOpenFileNames(self, "Rechnungen auswählen", "", "Rechnungen (*.pdf *.xml)")
+        filepaths, _ = QFileDialog.getOpenFileNames(self, "Rechnungen auswählen", paths.downloads_dir(), "Rechnungen (*.pdf *.xml)")
         imported = 0
         for filepath in filepaths:
             try:
