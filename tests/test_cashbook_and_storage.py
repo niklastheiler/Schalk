@@ -4,6 +4,7 @@ import pytest
 from src.controllers.db_controller import DBController, GoBDError
 from src.models.database import DatabaseManager, WrongPasswordError
 from src.utils import paths
+from src.utils.backup import create_backup, restore_backup
 from src.utils.einvoice_parser import parse_einvoice_xml, read_einvoice, to_html
 
 UBL = """<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
@@ -22,6 +23,7 @@ def test_cashbook_rules(controller, tmp_path):
     assert c.get_cashbook_entry(entry).attachment_hash
     with pytest.raises(ValueError):
         c.add_cashbook_entry(datetime(2026, 10, 2), 9999, "x", "A", "Barentnahme Privat", 19)
+    assert c.finalize_cashbook() == 2
     c.storno_cashbook_entry(entry)
     assert c.get_cashbook_balance() == 500
     with pytest.raises(GoBDError):
@@ -50,15 +52,15 @@ def test_xml_external_entities_are_not_resolved():
 def test_background_save_backup_and_restore(controller, tmp_path):
     c = controller
     c.add_customer(company_name="Gespeichert")
-    backup = tmp_path / "b.backup"
-    c.db.export_backup(str(backup), "geheim123")
+    backup = str(tmp_path / "b.backup")
+    create_backup(c.db, backup, "geheim123", {})
     c.close()
     reopened = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
     assert [x.company_name for x in reopened.get_customers()] == ["Gespeichert"]
     with pytest.raises(WrongPasswordError):
-        reopened.db.restore_backup(backup.read_bytes(), "falsch")
+        restore_backup(reopened.db, backup, "falsch", {})
     reopened.add_customer(company_name="Nach dem Backup")
-    reopened.db.restore_backup(backup.read_bytes(), "geheim123")
+    restore_backup(reopened.db, backup, "geheim123", {})
     reopened.close()
     restored = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
     assert [x.company_name for x in restored.get_customers()] == ["Gespeichert"]

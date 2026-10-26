@@ -13,6 +13,12 @@ def file_sha256(path: str) -> str:
     return sha256.hexdigest()
 
 
+def is_pdf(path: str) -> bool:
+    """Checks the file signature, not just the extension."""
+    with open(path, "rb") as f:
+        return f.read(5) == b"%PDF-"
+
+
 def archive_file(source_path: str, target_dir: str, prefix: str = "") -> tuple:
     """
     Copies a file into the archive directory under a unique name and marks it read-only

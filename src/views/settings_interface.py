@@ -2,8 +2,6 @@ import logging
 import os
 import shutil
 import sys
-import tempfile
-import zipfile
 from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
@@ -13,11 +11,14 @@ from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
 from src.models.database import WrongPasswordError
 from src.utils import paths
+from src.utils.backup import create_backup, restore_backup
 from src.utils.signal_bus import SignalBus
 from src.views.backup_password_dialog import BackupPasswordDialog
-from src.views.common import confirm, notify_error, notify_success, show_message
+from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
 
 logger = logging.getLogger(__name__)
+
+BACKUP_FILTER = "Schalk-Backup (*.backup)"
 
 FIRM_FIELDS = [
     ("company_name", "Firmenname"),
@@ -79,8 +80,9 @@ class SettingsInterface(QWidget):
 
     # --- UI ---
     def _add_tab(self, key: str, title: str, widget: QWidget):
-        self.stackedWidget.addWidget(widget)
-        self.pivot.addItem(key, title, lambda: self.stackedWidget.setCurrentWidget(widget))
+        page = make_scrollable(widget)
+        self.stackedWidget.addWidget(page)
+        self.pivot.addItem(key, title, lambda: self.stackedWidget.setCurrentWidget(page))
 
     def _form_tab(self, fields, extra=None) -> QWidget:
         tab = QWidget()
@@ -129,8 +131,8 @@ class SettingsInterface(QWidget):
         layout.setContentsMargins(36, 12, 36, 36)
         layout.addWidget(SubtitleLabel("Backup & Wiederherstellung"))
         text = BodyLabel(
-            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als ZIP-Archiv oder stelle ein Backup wieder her.\n"
-            "Die Datenbank im Backup wird mit einem Backup-Passwort verschlüsselt und lässt sich damit auf jedem Computer einspielen.\n"
+            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine verschlüsselte .backup-Datei oder stelle ein Backup wieder her.\n"
+            "Das Backup wird mit einem Backup-Passwort verschlüsselt und lässt sich damit auf jedem Computer einspielen.\n"
             "Wichtig: Der Datenbankschlüssel ist an dieses Windows-Benutzerkonto gebunden. Bei Neuinstallation oder PC-Wechsel "
             "sind die Daten nur über ein Backup wiederherstellbar – bitte regelmäßig sichern.\n"
             "Achtung: Beim Import werden alle bestehenden Daten überschrieben und das Programm startet neu!")
@@ -250,10 +252,13 @@ class SettingsInterface(QWidget):
             show_message(self, "Integritätsprüfung", "Alle Hash-Ketten und archivierten Dateien sind unverändert.")
 
     # --- Backup ---
+    def _backup_folders(self) -> dict:
+        return {"app_data": paths.APP_DATA_DIR, "assets": paths.ASSETS_DIR}
+
     def export_backup(self):
         path, _ = QFileDialog.getSaveFileName(self, "Backup speichern unter...",
-                                              paths.desktop_path(f"Schalk_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"),
-                                              "ZIP-Archiv (*.zip)")
+                                              paths.desktop_path(f"Schalk_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.backup"),
+                                              BACKUP_FILTER)
         if not path:
             return
         dialog = BackupPasswordDialog("create", parent=self.window())
@@ -261,16 +266,7 @@ class SettingsInterface(QWidget):
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                db_file = os.path.join(tmpdir, "schalk.backup")
-                self.db_controller.db.export_backup(db_file, dialog.password())
-                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                    zipf.write(db_file, "schalk.backup")
-                    for folder, name in ((paths.APP_DATA_DIR, "app_data"), (paths.ASSETS_DIR, "assets")):
-                        for root, _, files in os.walk(folder):
-                            for file in files:
-                                full = os.path.join(root, file)
-                                zipf.write(full, os.path.join(name, os.path.relpath(full, folder)))
+            create_backup(self.db_controller.db, path, dialog.password(), self._backup_folders())
         except Exception as e:
             logger.exception("Backup fehlgeschlagen")
             notify_error(self, "Fehler beim Export", str(e))
@@ -280,48 +276,29 @@ class SettingsInterface(QWidget):
         notify_success(self, "Backup erstellt", path, duration=5000)
 
     def import_backup(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Backup auswählen", "", "ZIP-Archiv (*.zip)")
+        path, _ = QFileDialog.getOpenFileName(self, "Backup auswählen", paths.downloads_dir(), BACKUP_FILTER)
         if not path or not confirm(self, "Backup einspielen",
                                    "Achtung: Dies überschreibt alle aktuellen Daten!\n"
                                    "Die bisherige Datenbank wird als .bak-Datei aufbewahrt. Das Programm startet danach neu.\n\n"
                                    "Möchtest du fortfahren?"):
             return
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                with zipfile.ZipFile(path) as zipf:
-                    zipf.extractall(tmpdir)
-                db_file = os.path.join(tmpdir, "schalk.backup")
-                if not os.path.exists(db_file):
-                    raise ValueError("Die ZIP-Datei enthält keine gültige Datenbank (schalk.backup).")
-                with open(db_file, "rb") as f:
-                    data = f.read()
-
-                message = ""
-                while True:
-                    dialog = BackupPasswordDialog("unlock", message, parent=self.window())
-                    if not dialog.exec():
-                        return
-                    try:
-                        # The writer is flushed first so the .bak copy is complete
-                        self.db_controller.db.flush()
-                        if os.path.exists(paths.DB_PATH):
-                            shutil.copy2(paths.DB_PATH, f"{paths.DB_PATH}.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
-                        self.db_controller.db.restore_backup(data, dialog.password())
-                        break
-                    except WrongPasswordError as e:
-                        message = str(e)
-
-                def copy_missing(src, dst):
-                    # Archived documents are read-only and must not be overwritten
-                    if not os.path.exists(dst):
-                        shutil.copy2(src, dst)
-                for folder, target in (("app_data", paths.APP_DATA_DIR), ("assets", paths.ASSETS_DIR)):
-                    if os.path.isdir(os.path.join(tmpdir, folder)):
-                        shutil.copytree(os.path.join(tmpdir, folder), target, dirs_exist_ok=True, copy_function=copy_missing)
-        except Exception as e:
-            logger.exception("Backup-Import fehlgeschlagen")
-            notify_error(self, "Fehler beim Import", str(e))
-            return
+        message = ""
+        while True:
+            dialog = BackupPasswordDialog("unlock", message, parent=self.window())
+            if not dialog.exec():
+                return
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                restore_backup(self.db_controller.db, path, dialog.password(), self._backup_folders())
+                break
+            except WrongPasswordError as e:
+                message = str(e)
+            except Exception as e:
+                logger.exception("Backup-Import fehlgeschlagen")
+                notify_error(self, "Fehler beim Import", str(e))
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
 
         # Restart: the running instance must not write its old state over the restored database
         arguments = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv

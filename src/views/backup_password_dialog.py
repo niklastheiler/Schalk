@@ -1,13 +1,12 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout
-from qfluentwidgets import BodyLabel, PasswordLineEdit, PrimaryPushButton, PushButton, SubtitleLabel
+from qfluentwidgets import BodyLabel, MessageBoxBase, PasswordLineEdit, SubtitleLabel
 
 MIN_PASSWORD_LENGTH = 8
 
 
-class BackupPasswordDialog(QDialog):
+class BackupPasswordDialog(MessageBoxBase):
     """
-    Asks for a backup password.
+    Asks for a backup password, shown as a light Fluent dialog over the main window.
     mode 'unlock': enter the password of an existing backup
     mode 'create': choose a password for a new backup
     """
@@ -15,71 +14,56 @@ class BackupPasswordDialog(QDialog):
     def __init__(self, mode: str = "unlock", message: str = "", parent=None):
         super().__init__(parent)
         self.mode = mode
-        self.setWindowTitle("Schalk")
-        self.setModal(True)
-        self.setMinimumWidth(420)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
+        self.widget.setMinimumWidth(440)
 
         title = "Backup-Passwort eingeben" if mode == "unlock" else "Backup-Passwort festlegen"
-        layout.addWidget(SubtitleLabel(title, self))
+        self.viewLayout.addWidget(SubtitleLabel(title, self.widget))
 
         if mode == "create":
             info = BodyLabel(
                 "Das Backup wird mit diesem Passwort verschlüsselt und kann damit auf jedem Computer "
-                "eingespielt werden. Ohne das Passwort ist das Backup wertlos – bitte sicher aufbewahren.", self)
+                "eingespielt werden. Ohne das Passwort ist das Backup wertlos – bitte sicher aufbewahren.", self.widget)
             info.setWordWrap(True)
-            layout.addWidget(info)
+            self.viewLayout.addWidget(info)
 
-        self.messageLabel = BodyLabel(message, self)
+        self.messageLabel = BodyLabel(message, self.widget)
         self.messageLabel.setWordWrap(True)
         self.messageLabel.setStyleSheet("color: #C42B1C;")
         self.messageLabel.setVisible(bool(message))
-        layout.addWidget(self.messageLabel)
+        self.viewLayout.addWidget(self.messageLabel)
 
-        self.passwordEdit = PasswordLineEdit(self)
+        self.passwordEdit = PasswordLineEdit(self.widget)
         self.passwordEdit.setPlaceholderText("Passwort")
-        layout.addWidget(self.passwordEdit)
+        self.viewLayout.addWidget(self.passwordEdit)
 
-        self.repeatEdit = PasswordLineEdit(self)
+        self.repeatEdit = PasswordLineEdit(self.widget)
         self.repeatEdit.setPlaceholderText("Passwort wiederholen")
         self.repeatEdit.setVisible(mode == "create")
-        layout.addWidget(self.repeatEdit)
+        self.viewLayout.addWidget(self.repeatEdit)
 
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.cancelBtn = PushButton("Abbrechen", self)
-        self.cancelBtn.clicked.connect(self.reject)
-        self.okBtn = PrimaryPushButton("OK", self)
-        self.okBtn.setDefault(True)
-        self.okBtn.clicked.connect(self._accept)
-        buttons.addWidget(self.cancelBtn)
-        buttons.addWidget(self.okBtn)
-        layout.addLayout(buttons)
-
-        self.passwordEdit.returnPressed.connect(self._accept)
-        self.repeatEdit.returnPressed.connect(self._accept)
+        self.yesButton.setText("OK")
+        self.cancelButton.setText("Abbrechen")
+        self.passwordEdit.returnPressed.connect(self.yesButton.click)
+        self.repeatEdit.returnPressed.connect(self.yesButton.click)
         self.passwordEdit.setFocus(Qt.OtherFocusReason)
 
     def show_error(self, message: str):
         self.messageLabel.setText(message)
         self.messageLabel.setVisible(True)
 
-    def _accept(self):
+    def validate(self) -> bool:
         password = self.passwordEdit.text()
         if not password:
             self.show_error("Bitte ein Passwort eingeben.")
-            return
+            return False
         if self.mode == "create":
             if len(password) < MIN_PASSWORD_LENGTH:
                 self.show_error(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen lang sein.")
-                return
+                return False
             if password != self.repeatEdit.text():
                 self.show_error("Die Passwörter stimmen nicht überein.")
-                return
-        self.accept()
+                return False
+        return True
 
     def password(self) -> str:
         return self.passwordEdit.text()

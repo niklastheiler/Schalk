@@ -3,6 +3,8 @@ from typing import Optional
 from PySide6.QtCore import QLocale, QStringListModel, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QAbstractItemView, QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
+from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets.components.widgets.line_edit import CompleterMenu, LineEditButton
 from qfluentwidgets import (BodyLabel, ComboBox, EditableComboBox, LineEdit, PrimaryPushButton, PushButton,
                             SearchLineEdit, SubtitleLabel, TableWidget)
 from src.controllers.db_controller import DBController, GoBDError, NO_ITEMS_MESSAGE
@@ -10,11 +12,12 @@ from src.utils.calculations import calculate_totals, item_total
 from src.utils.signal_bus import SignalBus
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
                            has_zero_rate)
-from src.views.common import fmt_money, keep_scrollbars_visible, notify_error
+from src.views.common import fmt_money, make_scrollable, notify_error, use_classic_scrollbars
 
 SMALL_BUSINESS_REASON = EXEMPTION_REASON_PRESETS[0]
 
 COL_TITLE, COL_QTY, COL_UNIT, COL_PRICE, COL_TAX, COL_DELETE = range(6)
+ITEM_WIDGET_HEIGHT = 33
 
 
 def _german_number(value: float) -> str:
@@ -55,8 +58,8 @@ class DocumentEditor(QWidget):
 
     # --- UI ---
     def init_ui(self):
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(24, 24, 24, 24)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 24, 24, 24)
 
         headerLayout = QHBoxLayout()
         self.backBtn = PushButton("Zurück")
@@ -69,7 +72,13 @@ class DocumentEditor(QWidget):
         headerLayout.addWidget(self.titleLabel)
         headerLayout.addStretch(1)
         headerLayout.addWidget(self.saveBtn)
-        self.vBoxLayout.addLayout(headerLayout)
+        outer.addLayout(headerLayout)
+
+        # The header stays fixed; customer data, items and totals scroll on small screens
+        content = QWidget()
+        self.vBoxLayout = QVBoxLayout(content)
+        self.vBoxLayout.setContentsMargins(0, 8, 12, 0)
+        outer.addWidget(make_scrollable(content))
 
         formLayout = QHBoxLayout()
         customerForm = QFormLayout()
@@ -84,6 +93,12 @@ class DocumentEditor(QWidget):
         self._completer.activated.connect(self._on_customer_chosen)
         self.customerSearch.setCompleter(self._completer)
         self.customerSearch.textEdited.connect(self._on_customer_search_edited)
+        # Arrow on the right opens the complete customer list like a drop-down; typing still filters
+        self.customerDropdownBtn = LineEditButton(FIF.ARROW_DOWN, self.customerSearch)
+        self.customerDropdownBtn.setToolTip("Alle Kunden anzeigen")
+        self.customerDropdownBtn.clicked.connect(self.show_all_customers)
+        self.customerSearch.hBoxLayout.addWidget(self.customerDropdownBtn, 0, Qt.AlignRight)
+        self.customerSearch.setTextMargins(0, 0, 90, 0)
         customerForm.addRow("Kunde", self.customerSearch)
         self.customerHint = BodyLabel("")
         customerForm.addRow("", self.customerHint)
@@ -93,8 +108,6 @@ class DocumentEditor(QWidget):
         self.addressEdit = self._line_edit("Straße und Hausnummer", customerForm)
         self.postalCodeEdit = self._line_edit("PLZ", customerForm)
         self.cityEdit = self._line_edit("Ort", customerForm)
-        self.emailEdit = self._line_edit("E-Mail (für E-Rechnung)", customerForm)
-        self.vatIdEdit = self._line_edit("USt-IdNr. des Kunden (optional)", customerForm)
         for edit in (self.companyEdit, self.nameEdit):
             edit.textChanged.connect(self._update_customer_hint)
 
@@ -124,7 +137,8 @@ class DocumentEditor(QWidget):
         self.vBoxLayout.addLayout(tableHeaderLayout)
 
         self.table = TableWidget(self)
-        keep_scrollbars_visible(self.table)
+        use_classic_scrollbars(self.table)
+        self.table.setMinimumHeight(240)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'MwSt.', ''])
@@ -178,6 +192,17 @@ class DocumentEditor(QWidget):
             self._customer_entries[label] = customer.id
         self._completer_model.setStringList(list(self._customer_entries))
 
+    def show_all_customers(self):
+        if not self._customer_entries:
+            return
+        if not self.customerSearch._completerMenu:
+            self.customerSearch.setCompleterMenu(CompleterMenu(self.customerSearch))
+        menu = self.customerSearch._completerMenu
+        self._completer.setCompletionPrefix("")
+        menu.setCompletion(self._completer.completionModel())
+        menu.setMaxVisibleItems(self._completer.maxVisibleItems())
+        menu.popup()
+
     def _on_customer_chosen(self, label: str):
         customer = self.db_controller.get_customer(self._customer_entries.get(label))
         if customer:
@@ -216,8 +241,6 @@ class DocumentEditor(QWidget):
         self.addressEdit.setText(customer.address or "")
         self.postalCodeEdit.setText(customer.postal_code or "")
         self.cityEdit.setText(customer.city or "")
-        self.emailEdit.setText(customer.email or "")
-        self.vatIdEdit.setText(customer.vat_id or "")
         self._update_customer_hint()
 
     def _save_customer(self) -> int:
@@ -229,8 +252,6 @@ class DocumentEditor(QWidget):
             address=self.addressEdit.text().strip(),
             postal_code=self.postalCodeEdit.text().strip(),
             city=self.cityEdit.text().strip(),
-            email=self.emailEdit.text().strip(),
-            vat_id=self.vatIdEdit.text().strip(),
         )
         customer = self._selected_customer()
         if customer:
@@ -246,7 +267,7 @@ class DocumentEditor(QWidget):
         self.set_read_only(False)
         self.titleLabel.setText(self.NEW_TITLE)
         for edit in (self.customerSearch, self.companyEdit, self.nameEdit, self.addressEdit, self.postalCodeEdit,
-                     self.cityEdit, self.emailEdit, self.vatIdEdit):
+                     self.cityEdit):
             edit.clear()
         self.exemptionEdit.setText(SMALL_BUSINESS_REASON if self.db_controller.is_small_business() else "")
         self.table.setRowCount(0)
@@ -269,7 +290,7 @@ class DocumentEditor(QWidget):
         self.saveBtn.setVisible(not read_only)
         self.addItemBtn.setVisible(not read_only)
         for edit in (self.customerSearch, self.companyEdit, self.nameEdit, self.addressEdit, self.postalCodeEdit,
-                     self.cityEdit, self.emailEdit, self.vatIdEdit, self.exemptionEdit):
+                     self.cityEdit, self.exemptionEdit):
             edit.setEnabled(not read_only)
         self.set_document_fields_enabled(not read_only)
         for row in range(self.table.rowCount()):
@@ -282,18 +303,23 @@ class DocumentEditor(QWidget):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        title_edit = LineEdit()
-        qty_edit = LineEdit()
+        # Created with the table as parent: a parentless widget would briefly pop up as its own window
+        parent = self.table.viewport()
+        title_edit = LineEdit(parent)
+        qty_edit = LineEdit(parent)
         qty_edit.setValidator(_number_validator())
-        unit_edit = LineEdit()
-        price_edit = LineEdit()
+        unit_edit = LineEdit(parent)
+        price_edit = LineEdit(parent)
         price_edit.setValidator(_number_validator())
-        tax_combo = ComboBox()
+        tax_combo = ComboBox(parent)
         for rate in TAX_RATE_OPTIONS:
             tax_combo.addItem(format_rate(rate), userData=rate)
-        delete_btn = PushButton("X")
+        delete_btn = PushButton("X", parent)
         delete_btn.setFixedWidth(40)
         delete_btn.clicked.connect(lambda: self._delete_row(title_edit))
+        # All fields of a row share the same height
+        for widget in (title_edit, qty_edit, unit_edit, price_edit, tax_combo, delete_btn):
+            widget.setFixedHeight(ITEM_WIDGET_HEIGHT)
 
         if item is not None:
             title_edit.setText(item.title)
