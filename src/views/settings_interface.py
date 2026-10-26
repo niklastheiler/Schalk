@@ -43,6 +43,7 @@ BANK_FIELDS = [
 
 class SettingsInterface(QWidget):
     integrityChecked = Signal(list)
+    updateCheckRequested = Signal()
 
     def __init__(self, db_controller: DBController, parent=None):
         super().__init__(parent=parent)
@@ -172,6 +173,12 @@ class SettingsInterface(QWidget):
         self.aboutLabel = BodyLabel(f"Version {APP_VERSION}\nAutor: {APP_AUTHOR}")
         self.aboutLabel.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.aboutLabel)
+        buttons = QHBoxLayout()
+        self.updateBtn = PushButton("Nach Update suchen")
+        self.updateBtn.clicked.connect(self.updateCheckRequested)
+        buttons.addWidget(self.updateBtn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
         layout.addStretch(1)
         return tab
 
