@@ -5,13 +5,14 @@ from datetime import datetime
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QTextBrowser, QVBoxLayout
 from pypdf import PdfReader
-from qfluentwidgets import (BodyLabel, DatePicker, DoubleSpinBox, FluentIcon as FIF, LineEdit, MessageBoxBase,
+from qfluentwidgets import (BodyLabel, DoubleSpinBox, FluentIcon as FIF, LineEdit, MessageBoxBase,
                             PushButton, RoundMenu, SubtitleLabel)
 from src.controllers.db_controller import DBController
 from src.utils import paths
 from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.date_picker import GermanDatePicker
 from src.views.invoice_interface import RIGHT, add_action
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ class IncomingInvoiceDialog(MessageBoxBase):
         self.supplierEdit = self._field("Lieferant", LineEdit(self), einvoice.seller_name if einvoice else "")
         self.numberEdit = self._field("Rechnungsnummer", LineEdit(self), einvoice.number if einvoice else "")
         self.descEdit = self._field("Beschreibung", LineEdit(self), description)
-        self.datePicker = DatePicker(self)
+        self.datePicker = GermanDatePicker(self)
         self.datePicker.setDate(QDate(date_obj.year, date_obj.month, date_obj.day))
         self._field("Rechnungsdatum", self.datePicker)
         self.amountSpin = DoubleSpinBox(self)

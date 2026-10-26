@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFormLayout
-from qfluentwidgets import CheckBox, DatePicker, LineEdit
+from qfluentwidgets import CheckBox, LineEdit
+from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import DocumentEditor, _german_number, _parse_number, _number_validator
 
 
@@ -9,7 +10,7 @@ def _qdate(value: datetime) -> QDate:
     return QDate(value.year, value.month, value.day)
 
 
-def _to_datetime(picker: DatePicker) -> datetime:
+def _to_datetime(picker: GermanDatePicker) -> datetime:
     d = picker.date
     return datetime(d.year(), d.month(), d.day(), tzinfo=timezone.utc)
 
@@ -19,9 +20,9 @@ class InvoiceEditor(DocumentEditor):
     SAVE_TEXT = "Rechnung speichern"
 
     def add_document_fields(self, form: QFormLayout):
-        self.invoiceDate = DatePicker()
+        self.invoiceDate = GermanDatePicker()
         form.addRow("Rechnungsdatum", self.invoiceDate)
-        self.deliveryDate = DatePicker()
+        self.deliveryDate = GermanDatePicker()
         form.addRow("Leistungsdatum", self.deliveryDate)
         self.creditCheck = CheckBox("Gutschrift / Nachlass")
         self.creditCheck.stateChanged.connect(self._on_credit_toggled)

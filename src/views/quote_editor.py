@@ -1,6 +1,6 @@
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFormLayout
-from qfluentwidgets import DatePicker
+from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import DocumentEditor
 from src.views.invoice_editor import _qdate, _to_datetime
 
@@ -10,7 +10,7 @@ class QuoteEditor(DocumentEditor):
     SAVE_TEXT = "Angebot speichern"
 
     def add_document_fields(self, form: QFormLayout):
-        self.quoteDate = DatePicker()
+        self.quoteDate = GermanDatePicker()
         form.addRow("Angebotsdatum", self.quoteDate)
 
     def clear_document_fields(self):

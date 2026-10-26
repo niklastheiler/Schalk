@@ -2,11 +2,12 @@ import os
 from datetime import datetime
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout
-from qfluentwidgets import BodyLabel, ComboBox, DatePicker, FluentIcon as FIF, LineEdit, RoundMenu, SubtitleLabel, TransparentToolButton
+from qfluentwidgets import BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, RoundMenu, SubtitleLabel, TransparentToolButton
 from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDError
 from src.utils import paths
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
 from src.views.invoice_interface import RIGHT, MonthDialog, add_action
 
@@ -41,7 +42,7 @@ class CashbookInterface(ListPage):
             box.addWidget(widget)
             form.addLayout(box)
 
-        self.datePicker = DatePicker()
+        self.datePicker = GermanDatePicker()
         self.datePicker.setDate(QDate.currentDate())
         labeled("Datum", self.datePicker)
         self.amountEdit = LineEdit()
