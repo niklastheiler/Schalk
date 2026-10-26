@@ -1,0 +1,52 @@
+# Builds Schalk.exe on Windows and publishes a GitHub release when a version tag (e.g. v1.0) is pushed.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Version prüfen
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path src/version.py -Pattern 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} passt nicht zu APP_VERSION $version in src/version.py"
+          }
+
+      - name: Tests und EXE bauen
+        shell: cmd
+        run: build.bat
+
+      - name: ZIP und Release-Text erstellen
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/Schalk -DestinationPath "Schalk-${{ github.ref_name }}-windows-x64.zip"
+          # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
+          $start = [array]::IndexOf($lines, "## $version")
+          if ($start -lt 0) { throw "CHANGELOG.md enthält keinen Abschnitt '## $version'" }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith("## ")) { $end = $i; break } }
+          $lines[($start + 1)..($end - 1)] | Set-Content release-notes.md -Encoding utf8
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Schalk ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: Schalk-${{ github.ref_name }}-windows-x64.zip

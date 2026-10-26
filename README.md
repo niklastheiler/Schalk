@@ -2,7 +2,11 @@
 
 Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 10/11**: Kundenrechnungen als E-Rechnung (ZUGFeRD/XRechnung), Angebote, Mahnungen, Kassenbuch, Eingangsrechnungen, Kunden und Auswertung. Die Datenhaltung ist GoBD-orientiert.
 
-## Installation (aus dem Quellcode)
+## Installation
+
+Unter [Releases](https://github.com/niklastheiler/Schalk/releases) die aktuelle `Schalk-vX.Y-windows-x64.zip` herunterladen, entpacken und `Schalk\Schalk.exe` starten. Eine Python-Installation ist nicht nötig. Was sich zwischen den Versionen geändert hat, steht im [Changelog](CHANGELOG.md).
+
+## Start aus dem Quellcode
 
 Voraussetzung: **Python 3.14** (64 Bit) von python.org. Python 3.15 wird noch nicht unterstützt, weil Saxon-HE (EN-16931-Prüfung) dafür noch kein Paket anbietet.
 
@@ -23,6 +27,12 @@ build.bat
 
 Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `dist\Schalk\Schalk.exe`. Diesen Ordner kann man auf andere Rechner kopieren.
 
+## Neue Version veröffentlichen
+
+1. In `src/version.py` die `APP_VERSION` erhöhen und in `CHANGELOG.md` einen Abschnitt `## <Version>` anlegen.
+2. Nach dem Merge auf `main` einen Tag setzen und pushen, z. B. `git tag v1.1` und `git push origin v1.1`.
+3. Der Workflow `.github/workflows/release.yml` baut die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
+
 ## Datenablage und Sicherheit
 
 | Was | Wo |
@@ -33,7 +43,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 | Protokoll | `%LOCALAPPDATA%\Schalk\schalk.log` |
 
 - Die Datenbank liegt nur im Arbeitsspeicher entschlüsselt vor. Auf der Festplatte steht ausschließlich die verschlüsselte Datei, sie wird im Hintergrund atomar geschrieben.
-- Der Schlüssel ist per DPAPI an das Windows-Benutzerkonto gebunden, deshalb gibt es keinen Passwort-Dialog. **Bei einer Neuinstallation von Windows oder einem PC-Wechsel sind die Daten nur über ein Backup wiederherstellbar.** Backups (Einstellungen → Backup) sind mit einem eigenen Backup-Passwort verschlüsselt und lassen sich auf jedem PC einspielen.
+- Der Schlüssel ist per DPAPI an das Windows-Benutzerkonto gebunden, deshalb gibt es keinen Passwort-Dialog. **Bei einer Neuinstallation von Windows oder einem PC-Wechsel sind die Daten nur über ein Backup wiederherstellbar.** Backups (Einstellungen → Sicherheit & GoBD) sind eine einzelne `.backup`-Datei mit Datenbank und allen archivierten Dokumenten. Sie ist mit einem eigenen Backup-Passwort verschlüsselt (AES-256-GCM) und lässt sich auf jedem PC einspielen.
 - Mit der Umgebungsvariable `SCHALK_DATA_DIR` lässt sich ein anderer Datenordner festlegen.
 - Das Programm lässt sich nur einmal gleichzeitig starten.
 
@@ -53,7 +63,7 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 
 - Rechnungen erhalten ihre lückenlose Nummer erst beim Festschreiben. Danach sind sie unveränderbar und werden nur per Stornorechnung korrigiert.
 - Rechnungen und Kassenbuch sind über SHA-256-Hash-Ketten gesichert. Archivierte Dateien sind schreibgeschützt und mit Hash gespeichert.
-- Kassenbucheinträge werden per Gegenbuchung storniert. Eingangsrechnungen werden storniert, nie gelöscht.
+- Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Eingangsrechnungen werden storniert, nie gelöscht.
 - Jede Aktion wird mit dem Windows-Benutzer protokolliert (Verlauf). Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft.
 
 ## Tests
@@ -62,3 +72,7 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 pip install -r requirements-dev.txt
 python -m pytest tests
 ```
+
+## Autor
+
+Niklas Theiler. Die Version steht in `src/version.py` und unter Einstellungen → Sicherheit & GoBD → Über Schalk.
