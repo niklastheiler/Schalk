@@ -48,6 +48,21 @@ def notify_warning(parent, title: str, text: str = "", duration: int = 5000):
                     duration=duration, parent=parent.window())
 
 
+def keep_scrollbars_visible(view):
+    """
+    The Fluent overlay scroll bars are only 3 px wide and faint until hovered; keep them in their
+    expanded state (groove with arrows, wide and darker handle) so the scroll position is always visible.
+    """
+    for bar in (view.scrollDelagate.vScrollBar, view.scrollDelagate.hScrollBar):
+        bar.setHandleColor(QColor(0, 0, 0, 150), QColor(255, 255, 255, 170))
+        bar.collapse = lambda: None # never fall back to the thin state
+        bar._isExpanded = True
+        bar.groove.opacityAni.stop()
+        bar.groove.setOpacity(1)
+        bar.handle.setOpacity(1)
+        bar._onOpacityAniValueChanged()
+
+
 def confirm(parent, title: str, text: str) -> bool:
     box = MessageBox(title, text, parent.window())
     box.yesButton.setText("Ja")
@@ -247,6 +262,7 @@ class ListPage(QWidget):
         self.proxy.setSourceModel(self.model)
 
         self.table = TableView(self)
+        keep_scrollbars_visible(self.table)
         self.table.setModel(self.proxy)
         header = self.table.horizontalHeader()
         header.setSectionsClickable(True)

@@ -10,7 +10,7 @@ from src.utils.calculations import calculate_totals, item_total
 from src.utils.signal_bus import SignalBus
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
                            has_zero_rate)
-from src.views.common import fmt_money, notify_error
+from src.views.common import fmt_money, keep_scrollbars_visible, notify_error
 
 SMALL_BUSINESS_REASON = EXEMPTION_REASON_PRESETS[0]
 
@@ -120,6 +120,7 @@ class DocumentEditor(QWidget):
         self.vBoxLayout.addLayout(tableHeaderLayout)
 
         self.table = TableWidget(self)
+        keep_scrollbars_visible(self.table)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'MwSt.', ''])
