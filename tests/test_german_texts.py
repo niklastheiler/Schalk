@@ -33,3 +33,13 @@ def test_date_picker_in_german_order(qapp):
         assert picker.date == QDate(2025, 12, 31)
     finally:
         qapp.removeTranslator(translator)
+
+
+def test_untranslated_texts_stay_visible(window, qapp):
+    from qfluentwidgets import MessageBox
+    translator = install_german_translations(qapp)
+    try:
+        box = MessageBox("Titel", "Text", window)
+        assert box.yesButton.text() == "OK"
+    finally:
+        qapp.removeTranslator(translator)

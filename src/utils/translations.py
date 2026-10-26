@@ -10,7 +10,8 @@ GERMAN = {
 
 class GermanTranslator(QTranslator):
     def translate(self, context, source_text, disambiguation=None, n=-1):
-        return GERMAN.get(source_text, "")
+        # None (not "") for unknown texts: Qt then keeps the original text instead of showing nothing
+        return GERMAN.get(source_text)
 
     def isEmpty(self) -> bool:
         return False
