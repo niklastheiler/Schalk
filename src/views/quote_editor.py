@@ -1,9 +1,10 @@
 from PySide6.QtCore import Signal
-from qfluentwidgets import ComboBox, DatePicker, InfoBar, InfoBarPosition, LineEdit, PrimaryPushButton, PushButton, SubtitleLabel, TableWidget
+from qfluentwidgets import BodyLabel, ComboBox, DatePicker, EditableComboBox, InfoBar, InfoBarPosition, LineEdit, PrimaryPushButton, PushButton, SubtitleLabel, TableWidget
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
 from src.controllers.db_controller import DBController, GoBDError
 from src.utils.calculations import calculate_totals, item_total
+from src.utils.tax import TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate, has_zero_rate
 from datetime import datetime, timezone
 
 class QuoteEditor(QWidget):
@@ -74,6 +75,7 @@ class QuoteEditor(QWidget):
         self.quoteDate = DatePicker()
         self.quoteDate.setDate(QDate.currentDate())
         dateForm.addRow("Angebotsdatum", self.quoteDate)
+        self._create_exemption_widgets(dateForm)
         
         formLayout.addLayout(customerForm, 1)
         formLayout.addLayout(dateForm, 1)
@@ -93,13 +95,14 @@ class QuoteEditor(QWidget):
         self.table.viewport().setMouseTracking(False)
         from PySide6.QtWidgets import QAbstractItemView
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'Aktion'])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'MwSt.', 'Aktion'])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.setColumnWidth(1, 140)
         self.table.setColumnWidth(2, 100)
         self.table.setColumnWidth(3, 180)
-        self.table.setColumnWidth(4, 50)
+        self.table.setColumnWidth(4, 110)
+        self.table.setColumnWidth(5, 50)
         self.table.verticalHeader().hide()
         # Performance optimization for scrolling with setCellWidget
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -134,6 +137,7 @@ class QuoteEditor(QWidget):
         self.postalCodeEdit.clear()
         self.cityEdit.clear()
         self.quoteDate.setDate(QDate.currentDate())
+        self.exemptionEdit.setText("")
         self.table.setRowCount(0)
         self.load_customers()
         self.update_totals()
@@ -153,6 +157,7 @@ class QuoteEditor(QWidget):
                 break
                 
         self.quoteDate.setDate(QDate(quote.quote_date.year, quote.quote_date.month, quote.quote_date.day))
+        self.exemptionEdit.setText(quote.tax_exemption_reason or "")
         
         self.table.setRowCount(0)
         for item in quote.items:
@@ -166,7 +171,7 @@ class QuoteEditor(QWidget):
             title_widget = self.table.cellWidget(row, 0)
             title_widget.item_description = item.description
             title_widget.item_discount = item.discount_percent or 0.0
-            title_widget.item_tax = item.tax_percent if item.tax_percent is not None else 19.0
+            self._set_row_tax(row, item.tax_percent if item.tax_percent is not None else 19.0)
             
         self.update_totals()
         
@@ -184,12 +189,13 @@ class QuoteEditor(QWidget):
         self.postalCodeEdit.setEnabled(not read_only)
         self.cityEdit.setEnabled(not read_only)
         self.quoteDate.setEnabled(not read_only)
+        self.exemptionEdit.setEnabled(not read_only)
         
         for row in range(self.table.rowCount()):
-            for col in range(4):
+            for col in range(5):
                 widget = self.table.cellWidget(row, col)
                 if widget: widget.setEnabled(not read_only)
-            del_btn = self.table.cellWidget(row, 4)
+            del_btn = self.table.cellWidget(row, 5)
             if del_btn: del_btn.setVisible(not read_only)
 
     def load_customers(self):
@@ -252,6 +258,13 @@ class QuoteEditor(QWidget):
         price_spin.setText("0,00")
         price_spin.textChanged.connect(self.update_totals)
         
+        tax_combo = ComboBox()
+        tax_combo.setFixedHeight(widget_height)
+        for rate in TAX_RATE_OPTIONS:
+            tax_combo.addItem(format_rate(rate), userData=rate)
+        tax_combo.setCurrentIndex(0)
+        tax_combo.currentIndexChanged.connect(self.update_totals)
+        
         del_btn = PushButton("X")
         del_btn.setFixedWidth(40)
         del_btn.setFixedHeight(widget_height)
@@ -270,17 +283,55 @@ class QuoteEditor(QWidget):
         qty_spin.setEnabled(not read_only)
         unit_edit.setEnabled(not read_only)
         price_spin.setEnabled(not read_only)
+        tax_combo.setEnabled(not read_only)
         container.setVisible(not read_only)
         
         self.table.setCellWidget(row, 0, title_edit)
         self.table.setCellWidget(row, 1, qty_spin)
         self.table.setCellWidget(row, 2, unit_edit)
         self.table.setCellWidget(row, 3, price_spin)
-        self.table.setCellWidget(row, 4, container)
+        self.table.setCellWidget(row, 4, tax_combo)
+        self.table.setCellWidget(row, 5, container)
+
+    def _set_row_tax(self, row, rate):
+        combo = self.table.cellWidget(row, 4)
+        for i in range(combo.count()):
+            if combo.itemData(i) == rate:
+                combo.setCurrentIndex(i)
+                return
+        # Rate that is no longer offered (e.g. from an older document)
+        combo.addItem(format_rate(rate), userData=rate)
+        combo.setCurrentIndex(combo.count() - 1)
+
+    def _create_exemption_widgets(self, form):
+        self.exemptionLabel = BodyLabel("Befreiungsgrund")
+        self.exemptionEdit = EditableComboBox()
+        self.exemptionEdit.addItems(EXEMPTION_REASON_PRESETS)
+        self.exemptionEdit.setPlaceholderText("Pflicht bei 0 % MwSt., z. B. § 19 UStG")
+        self.exemptionEdit.setText("")
+        form.addRow(self.exemptionLabel, self.exemptionEdit)
+        self.exemptionLabel.hide()
+        self.exemptionEdit.hide()
+
+    def _update_exemption_visibility(self):
+        # The reason is only needed (and printed) if at least one row has 0 % VAT
+        visible = any(self.table.cellWidget(r, 4).currentData() == 0.0 for r in range(self.table.rowCount()) if self.table.cellWidget(r, 4))
+        self.exemptionLabel.setVisible(visible)
+        self.exemptionEdit.setVisible(visible)
+
+    def _exemption_reason(self, items) -> str:
+        return self.exemptionEdit.text().strip() if has_zero_rate(items) else ""
+
+    def _check_exemption(self, items) -> bool:
+        if has_zero_rate(items) and not self.exemptionEdit.text().strip():
+            InfoBar.error("Befreiungsgrund fehlt", EXEMPTION_REQUIRED_MESSAGE, orient=Qt.Horizontal, isClosable=True,
+                          position=InfoBarPosition.TOP, duration=5000, parent=self.window())
+            return False
+        return True
 
     def delete_row(self, btn):
         for row in range(self.table.rowCount()):
-            widget = self.table.cellWidget(row, 4)
+            widget = self.table.cellWidget(row, 5)
             if hasattr(widget, 'del_btn') and widget.del_btn == btn:
                 self.table.removeRow(row)
                 self.update_totals()
@@ -314,7 +365,7 @@ class QuoteEditor(QWidget):
                 "unit": unit,
                 "unit_price": price,
                 "discount_percent": discount,
-                "tax_percent": getattr(title_widget, 'item_tax', 19.0),
+                "tax_percent": self.table.cellWidget(row, 4).currentData(),
                 "total_price": item_total(qty, price, discount)
             })
         return items
@@ -331,8 +382,11 @@ class QuoteEditor(QWidget):
             self.tax19Label.hide()
             
         self.grossTotalLabel.setText(f"Gesamtbetrag: {totals['gross_amount']:.2f} €")
+        self._update_exemption_visibility()
 
     def save_quote(self):
+        if not self._check_exemption(self._collect_items()):
+            return
         if not self.companyEdit.text().strip() and not self.nameEdit.text().strip():
             InfoBar.error(
                 title="Fehler",
@@ -380,24 +434,26 @@ class QuoteEditor(QWidget):
         qdate_q = self.quoteDate.date
         q_date = datetime(qdate_q.year(), qdate_q.month(), qdate_q.day(), tzinfo=timezone.utc)
         
-        if self.current_quote_id:
-            try:
+        try:
+            if self.current_quote_id:
                 self.db_controller.update_quote(
                     quote_id=self.current_quote_id,
                     customer_id=customer_id,
                     quote_date=q_date,
-                    items=items
+                    items=items,
+                    tax_exemption_reason=self._exemption_reason(items)
                 )
-            except GoBDError as e:
-                InfoBar.error("Nicht erlaubt", str(e), orient=Qt.Horizontal, isClosable=True,
-                              position=InfoBarPosition.TOP, duration=6000, parent=self.window())
-                return
-            saved_id = self.current_quote_id
-        else:
-            saved_id = self.db_controller.create_quote(
-                customer_id=customer_id,
-                quote_date=q_date,
-                items=items
-            )
+                saved_id = self.current_quote_id
+            else:
+                saved_id = self.db_controller.create_quote(
+                    customer_id=customer_id,
+                    quote_date=q_date,
+                    items=items,
+                    tax_exemption_reason=self._exemption_reason(items)
+                )
+        except (GoBDError, ValueError) as e:
+            InfoBar.error("Nicht erlaubt", str(e), orient=Qt.Horizontal, isClosable=True,
+                          position=InfoBarPosition.TOP, duration=6000, parent=self.window())
+            return
         self.saved.emit(saved_id)
 

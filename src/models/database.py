@@ -46,6 +46,7 @@ class Invoice(Base):
     payment_terms = Column(String)
     credit_amount = Column(Float, default=0.0)
     credit_desc = Column(String)
+    tax_exemption_reason = Column(String) # Required on the invoice if items have 0 % VAT
     hash_chain = Column(String) # For GoBD immutability
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     archived_at = Column(DateTime)
@@ -95,6 +96,7 @@ class Quote(Base):
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)
     gross_amount = Column(Float, default=0.0)
+    tax_exemption_reason = Column(String)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     archived_at = Column(DateTime)
 

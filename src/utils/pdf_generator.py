@@ -163,7 +163,10 @@ class PDFGenerator:
             invoice.items, invoice.net_amount, invoice.tax_amount, invoice.gross_amount,
             invoice.credit_amount or 0.0, invoice.credit_desc
         ))
-        elements.append(Spacer(1, 40))
+        elements.append(Spacer(1, 20))
+        if invoice.tax_exemption_reason:
+            elements.append(self._p(f"Hinweis: {invoice.tax_exemption_reason}"))
+        elements.append(Spacer(1, 20))
 
         if invoice.cancels_invoice_id:
             elements.append(self._p("Mit dieser Stornorechnung wird die oben genannte Rechnung vollständig aufgehoben."))
@@ -185,7 +188,10 @@ class PDFGenerator:
         elements.append(Spacer(1, 20))
 
         elements.append(self._items_table(quote.items, quote.net_amount, quote.tax_amount, quote.gross_amount))
-        elements.append(Spacer(1, 40))
+        elements.append(Spacer(1, 20))
+        if quote.tax_exemption_reason:
+            elements.append(self._p(f"Hinweis: {quote.tax_exemption_reason}"))
+        elements.append(Spacer(1, 20))
         elements.append(self._p("Wir hoffen, dass Ihnen dieses Angebot zusagt und stehen für Rückfragen gerne zur Verfügung."))
         elements.append(self._p("Das Angebot ist 14 Tage gültig."))
 

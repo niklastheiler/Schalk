@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from src.models.database import DatabaseManager, Setting, Customer, Invoice, InvoiceItem, Quote, QuoteItem, CashbookEntry, DocumentHistory, IncomingInvoice
 from src.utils.signal_bus import SignalBus
 from src.utils.calculations import calculate_totals, item_total
+from src.utils.tax import has_zero_rate, EXEMPTION_REQUIRED_MESSAGE
 from src.utils.archive import archive_file, verify_file
 from src.utils import paths
 
@@ -26,6 +27,11 @@ def _current_user() -> str:
         return getpass.getuser() or "System"
     except Exception:
         return "System"
+
+
+def _num(value):
+    # -0.0 (e.g. negated zero tax of a Stornorechnung) is read back from SQLite as 0.0
+    return None if value is None else float(value) + 0.0
 
 
 def _iso(dt) -> Optional[str]:
@@ -173,7 +179,7 @@ class DBController:
     @staticmethod
     def _cashbook_hash_payload(entry: CashbookEntry) -> str:
         return "|".join(str(v) for v in [
-            entry.id, _iso(entry.entry_date), entry.amount, entry.receipt_number, entry.description,
+            entry.id, _iso(entry.entry_date), _num(entry.amount), entry.receipt_number, entry.description,
             entry.entry_type, entry.attachment_hash or "", int(bool(entry.is_storno)), entry.storno_of_id or ""
         ])
 
@@ -313,6 +319,16 @@ class DBController:
             })
         return normalized
 
+    @staticmethod
+    def _exemption_reason(items: list, reason: str) -> Optional[str]:
+        """Validates the VAT exemption reason; it is only kept if an item has 0 % VAT."""
+        if not has_zero_rate(items):
+            return None
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError(EXEMPTION_REQUIRED_MESSAGE)
+        return reason
+
     # --- Invoices ---
     @staticmethod
     def is_finalized(invoice: Invoice) -> bool:
@@ -343,11 +359,13 @@ class DBController:
             "finalized_at": _iso(invoice.finalized_at),
             "customer": [invoice.customer_name, invoice.customer_address, invoice.customer_postal_code,
                          invoice.customer_city, invoice.customer_country, invoice.customer_vat_id],
-            "items": [[i.title, i.description, i.quantity, i.unit, i.unit_price, i.discount_percent, i.tax_percent, i.total_price] for i in items],
-            "net": invoice.net_amount,
-            "tax": invoice.tax_amount,
-            "gross": invoice.gross_amount,
-            "credit": [invoice.credit_amount or 0.0, invoice.credit_desc or ""],
+            "items": [[i.title, i.description, _num(i.quantity), i.unit, _num(i.unit_price), _num(i.discount_percent),
+                       _num(i.tax_percent), _num(i.total_price)] for i in items],
+            "net": _num(invoice.net_amount),
+            "tax": _num(invoice.tax_amount),
+            "gross": _num(invoice.gross_amount),
+            "credit": [_num(invoice.credit_amount or 0.0), invoice.credit_desc or ""],
+            "tax_exemption_reason": invoice.tax_exemption_reason,
             "cancels": invoice.cancels_invoice_id,
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -388,6 +406,7 @@ class DBController:
         credit_amount = kwargs.get("credit_amount", 0.0) or 0.0
         totals = calculate_totals(items, credit_amount)
         status = kwargs.get("status", "Entwurf")
+        exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
 
         with self.get_session() as session:
             invoice = Invoice(
@@ -401,6 +420,7 @@ class DBController:
                 gross_amount=totals["gross_amount"],
                 credit_amount=totals["credit_amount"],
                 credit_desc=kwargs.get("credit_desc", ""),
+                tax_exemption_reason=exemption_reason,
                 status="Entwurf"
             )
             session.add(invoice)
@@ -434,8 +454,10 @@ class DBController:
             items = self._normalize_items(items)
             credit_amount = kwargs.get("credit_amount", 0.0) or 0.0
             totals = calculate_totals(items, credit_amount)
+            exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
 
             invoice.customer_id = customer_id
+            invoice.tax_exemption_reason = exemption_reason
             invoice.invoice_date = invoice_date
             invoice.delivery_date = delivery_date
             invoice.net_amount = totals["net_amount"]
@@ -513,6 +535,7 @@ class DBController:
                 gross_amount=-original.gross_amount,
                 credit_amount=-(original.credit_amount or 0.0),
                 credit_desc=original.credit_desc,
+                tax_exemption_reason=original.tax_exemption_reason,
                 status="Storniert",
                 cancels_invoice_id=original.id,
                 customer_name=original.customer_name,
@@ -626,9 +649,10 @@ class DBController:
         last_num = max((int(n.split('-')[1]) for (n,) in numbers if n.split('-')[1].isdigit()), default=0)
         return f"A{year}-{last_num + 1:06d}"
 
-    def create_quote(self, customer_id: int, quote_date: datetime, items: list, user: str = None):
+    def create_quote(self, customer_id: int, quote_date: datetime, items: list, user: str = None, tax_exemption_reason: str = None):
         items = self._normalize_items(items)
         totals = calculate_totals(items)
+        exemption_reason = self._exemption_reason(items, tax_exemption_reason)
         with self.get_session() as session:
             quote = Quote(
                 quote_number=self.get_next_quote_number(session),
@@ -636,7 +660,8 @@ class DBController:
                 quote_date=quote_date,
                 net_amount=totals["net_amount"],
                 tax_amount=totals["tax_amount"],
-                gross_amount=totals["gross_amount"]
+                gross_amount=totals["gross_amount"],
+                tax_exemption_reason=exemption_reason
             )
             session.add(quote)
             session.flush()
@@ -662,6 +687,7 @@ class DBController:
 
             items = self._normalize_items(items)
             totals = calculate_totals(items)
+            quote.tax_exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
             quote.customer_id = customer_id
             quote.quote_date = quote_date
             if "status" in kwargs:

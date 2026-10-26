@@ -6,6 +6,7 @@ from drafthorse.models.party import TaxRegistration
 from drafthorse.models.payment import PaymentMeans, PaymentTerms
 from drafthorse.models.tradelines import LineItem
 from src.utils.calculations import tax_breakdown, round_money
+from src.utils.tax import vat_category
 
 # UN/ECE Rec. 20 unit codes
 UNIT_CODES = {
@@ -33,11 +34,6 @@ def _country(name) -> str:
     if len(name) == 2 and name.isalpha():
         return name.upper()
     return COUNTRY_CODES.get(name.lower(), "DE")
-
-
-def _category(rate: float) -> str:
-    # S = standard/reduced rate, Z = zero rated
-    return "S" if rate > 0 else "Z"
 
 
 def _date(value):
@@ -126,6 +122,7 @@ def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
         terms.due = _date(invoice.invoice_date + timedelta(days=payment_days))
         settlement.terms.add(terms)
 
+    reason = invoice.tax_exemption_reason or ""
     credit = abs(invoice.credit_amount or 0.0)
     items = invoice.items
     breakdown = tax_breakdown([{"total_price": abs(i.total_price), "tax_percent": i.tax_percent} for i in items], credit)
@@ -136,8 +133,10 @@ def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
         tax.calculated_amount = _dec(tax_amount)
         tax.basis_amount = _dec(basis)
         tax.type_code = "VAT"
-        tax.category_code = _category(rate)
+        tax.category_code = vat_category(rate, reason)
         tax.rate_applicable_percent = Decimal(str(rate))
+        if tax.category_code != "S":
+            tax.exemption_reason = reason or "Steuerbefreit"
         settlement.trade_tax.add(tax)
 
     # The credit (Gutschrift) is a document level allowance, split over the tax rates
@@ -153,7 +152,7 @@ def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
             allowance.reason = invoice.credit_desc or "Gutschrift"
             category = CategoryTradeTax()
             category.type_code = "VAT"
-            category.category_code = _category(rate)
+            category.category_code = vat_category(rate, reason)
             category.rate_applicable_percent = Decimal(str(rate))
             allowance.trade_tax.add(category)
             settlement.allowance_charge.add(allowance)
@@ -183,7 +182,7 @@ def generate_zugferd_xml(invoice, db_controller, output_path) -> bool:
         line.delivery.billed_quantity = (Decimal(str(item.quantity)), UNIT_CODES.get((item.unit or "").strip().lower(), "C62"))
 
         line.settlement.trade_tax.type_code = "VAT"
-        line.settlement.trade_tax.category_code = _category(item.tax_percent)
+        line.settlement.trade_tax.category_code = vat_category(item.tax_percent, reason)
         line.settlement.trade_tax.rate_applicable_percent = Decimal(str(item.tax_percent))
         line.settlement.monetary_summation.total_amount = _dec(abs(item.total_price))
 
