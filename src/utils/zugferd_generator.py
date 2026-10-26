@@ -23,10 +23,11 @@ UNIT_CODES = {
     "stück": "C62", "stk": "C62", "stk.": "C62",
     "stunde": "HUR", "stunden": "HUR", "std": "HUR", "std.": "HUR", "h": "HUR",
     "tag": "DAY", "tage": "DAY",
-    "kg": "KGM", "g": "GRM", "t": "TNE",
-    "m": "MTR", "m²": "MTK", "m2": "MTK", "m³": "MTQ", "m3": "MTQ", "km": "KMT",
+    "kg": "KGM", "kilogramm": "KGM", "g": "GRM", "gramm": "GRM", "t": "TNE", "tonne": "TNE", "tonnen": "TNE",
+    "m": "MTR", "meter": "MTR", "m²": "MTK", "m2": "MTK", "qm": "MTK", "quadratmeter": "MTK",
+    "m³": "MTQ", "m3": "MTQ", "kubikmeter": "MTQ", "km": "KMT", "kilometer": "KMT",
     "l": "LTR", "liter": "LTR",
-    "pauschal": "LS", "psch": "LS", "psch.": "LS",
+    "pauschal": "LS", "pauschale": "LS", "psch": "LS", "psch.": "LS",
     "monat": "MON", "monate": "MON",
 }
 

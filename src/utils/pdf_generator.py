@@ -47,6 +47,11 @@ def _styles():
     return styles
 
 
+def _markup(text) -> str:
+    """User data for a reportlab Paragraph: escaped (it is parsed as markup), line breaks kept."""
+    return escape(str(text or "")).replace("\r\n", "\n").replace("\n", "<br/>")
+
+
 def fmt_money(value: float) -> str:
     # German format: 1.234,56 €
     return f"{value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -63,8 +68,7 @@ class PDFGenerator:
         self.styles = _styles()
 
     def _p(self, text, style='Normal', bold=False):
-        # User data (names, addresses, item titles) must be escaped, reportlab parses Paragraphs as markup
-        content = escape(str(text or ""))
+        content = _markup(text)
         if bold:
             content = f"<b>{content}</b>"
         return Paragraph(content, self.styles[style])
@@ -132,9 +136,9 @@ class PDFGenerator:
         data = [['Pos.', 'Bezeichnung', 'Menge', 'Einzelpreis', 'MwSt.', 'Gesamtpreis']]
 
         for i, item in enumerate(items, 1):
-            title = escape(item.title or "")
+            title = _markup(item.title)
             if item.description:
-                title += f"<br/><font size=8>{escape(item.description)}</font>"
+                title += f"<br/><font size=8>{_markup(item.description)}</font>"
             if item.discount_percent:
                 title += f"<br/><font size=8>abzgl. {fmt_number(item.discount_percent)} % Rabatt</font>"
             data.append([
