@@ -8,6 +8,7 @@ from src.models.database import DatabaseManager, KeyMissingError, WrongPasswordE
 from src.utils import paths
 from src.utils.app_logging import install_excepthook, setup_logging
 from src.utils.signal_bus import SignalBus
+from src.utils.translations import install_german_translations
 
 logger = logging.getLogger(__name__)
 APP_ID = "Schalk.Rechnungsprogramm"
@@ -35,6 +36,7 @@ def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName("Schalk")
+    install_german_translations(app)
 
     # Two instances would overwrite each other's changes in the encrypted database file
     lock = QLockFile(paths.LOCK_PATH)

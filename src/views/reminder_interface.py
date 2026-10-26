@@ -21,7 +21,7 @@ class ReminderInterface(ListPage):
     def __init__(self, db_controller: DBController, parent=None):
         self.db_controller = c = db_controller
         columns = [
-            Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: (_naive(i.invoice_date), i.id), width=100, descending=True),
+            Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: (_naive(i.invoice_date), i.id), width=115, descending=True),
             Column("Rechnungsnummer", lambda i: i.invoice_number, width=160, descending=True),
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT, descending=True),
