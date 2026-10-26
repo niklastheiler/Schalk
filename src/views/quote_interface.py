@@ -9,7 +9,7 @@ from src.controllers.db_controller import DBController, GoBDError, QUOTE_STATUSE
 from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREEN, COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.common import COLOR_GREEN, COLOR_GREY, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
 from src.views.invoice_interface import RIGHT, _naive, add_action
 from src.views.quote_editor import QuoteEditor
 
@@ -26,6 +26,8 @@ class QuoteListPage(ListPage):
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT, descending=True),
             Column("Status", lambda q: q.status + (" (archiviert)" if q.archived_at else ""), width=170),
+            Column("", lambda q: "", width=56, icon_svg=ROCKET_SVG, tooltip="In Rechnung umwandeln",
+                   on_click=lambda q: interface.convert_to_invoice(q.id, ask=True)),
         ]
         super().__init__("Angebote", columns, (SignalBus.get().quotesChanged, SignalBus.get().customersChanged),
                          date_of=lambda q: q.quote_date, row_color=self._row_color, parent=interface)
@@ -118,7 +120,11 @@ class QuoteInterface(QWidget):
             shutil.copyfile(self._render(quote_id), target)
             notify_success(self, "PDF gespeichert", target)
 
-    def convert_to_invoice(self, quote_id):
+    def convert_to_invoice(self, quote_id, ask: bool = False):
+        quote = self.db_controller.get_quote(quote_id)
+        if ask and not confirm(self, "In Rechnung umwandeln",
+                               f"Aus Angebot {quote.quote_number} einen Rechnungsentwurf mit allen Positionen erstellen?"):
+            return
         try:
             invoice_id = self.db_controller.create_invoice_from_quote(quote_id)
         except ValueError as e:
