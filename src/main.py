@@ -9,6 +9,7 @@ from src.utils import paths
 from src.utils.app_logging import install_excepthook, setup_logging
 from src.utils.signal_bus import SignalBus
 from src.utils.translations import install_german_translations
+from src.version import APP_NAME, APP_VERSION
 
 logger = logging.getLogger(__name__)
 APP_ID = "Schalk.Rechnungsprogramm"
@@ -35,7 +36,8 @@ def main():
     _set_windows_app_id()
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
-    app.setApplicationName("Schalk")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     install_german_translations(app)
 
     # Two instances would overwrite each other's changes in the encrypted database file

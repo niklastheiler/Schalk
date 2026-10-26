@@ -13,6 +13,7 @@ from src.models.database import WrongPasswordError
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
 from src.utils.signal_bus import SignalBus
+from src.version import APP_AUTHOR, APP_NAME, APP_VERSION
 from src.views.backup_password_dialog import BackupPasswordDialog
 from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
 
@@ -64,9 +65,7 @@ class SettingsInterface(QWidget):
         self.stackedWidget = QStackedWidget(self)
         layout.addWidget(self.stackedWidget)
         self._add_tab("firm", "Firmendaten", self._build_firm_tab())
-        self._add_tab("bank", "Bankdaten", self._form_tab(BANK_FIELDS))
-        self._add_tab("payment", "Zahlungsziel", self._build_payment_tab())
-        self._add_tab("backup", "Backup", self._build_backup_tab())
+        self._add_tab("bank", "Bankdaten && Zahlungsziel", self._build_bank_tab())
         self._add_tab("security", "Sicherheit && GoBD", self._build_security_tab())
         self.pivot.setCurrentItem("firm")
 
@@ -118,17 +117,14 @@ class SettingsInterface(QWidget):
             form.addRow(BodyLabel("Besteuerung"), self.smallBusinessCheck)
         return self._form_tab(FIRM_FIELDS, extra)
 
-    def _build_payment_tab(self) -> QWidget:
+    def _build_bank_tab(self) -> QWidget:
         def extra(form, tab):
             self.paymentTermsSpin = SpinBox(tab)
             self.paymentTermsSpin.setRange(0, 365)
             form.addRow(BodyLabel("Standard-Zahlungsziel (Tage)"), self.paymentTermsSpin)
-        return self._form_tab([], extra)
+        return self._form_tab(BANK_FIELDS, extra)
 
-    def _build_backup_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(36, 12, 36, 36)
+    def _add_backup_section(self, layout: QVBoxLayout):
         layout.addWidget(SubtitleLabel("Backup & Wiederherstellung"))
         text = BodyLabel(
             "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine verschlüsselte .backup-Datei oder stelle ein Backup wieder her.\n"
@@ -148,8 +144,6 @@ class SettingsInterface(QWidget):
         buttons.addWidget(import_btn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        layout.addStretch(1)
-        return tab
 
     def _build_security_tab(self) -> QWidget:
         tab = QWidget()
@@ -166,11 +160,18 @@ class SettingsInterface(QWidget):
         buttons.addWidget(self.integrityBtn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        layout.addSpacing(16)
+        layout.addSpacing(24)
+        self._add_backup_section(layout)
+        layout.addSpacing(24)
         layout.addWidget(SubtitleLabel("Datenablage"))
         location = BodyLabel(f"Datenordner: {paths.DATA_DIR}\nProtokoll: {paths.LOG_PATH}")
         location.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(location)
+        layout.addSpacing(24)
+        layout.addWidget(SubtitleLabel(f"Über {APP_NAME}"))
+        self.aboutLabel = BodyLabel(f"Version {APP_VERSION}\nAutor: {APP_AUTHOR}")
+        self.aboutLabel.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.aboutLabel)
         layout.addStretch(1)
         return tab
 
