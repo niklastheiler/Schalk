@@ -15,7 +15,7 @@ from src.models.database import WrongPasswordError
 from src.utils import paths
 from src.utils.signal_bus import SignalBus
 from src.views.backup_password_dialog import BackupPasswordDialog
-from src.views.common import confirm, notify_error, notify_success, show_message
+from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,9 @@ class SettingsInterface(QWidget):
 
     # --- UI ---
     def _add_tab(self, key: str, title: str, widget: QWidget):
-        self.stackedWidget.addWidget(widget)
-        self.pivot.addItem(key, title, lambda: self.stackedWidget.setCurrentWidget(widget))
+        page = make_scrollable(widget)
+        self.stackedWidget.addWidget(page)
+        self.pivot.addItem(key, title, lambda: self.stackedWidget.setCurrentWidget(page))
 
     def _form_tab(self, fields, extra=None) -> QWidget:
         tab = QWidget()

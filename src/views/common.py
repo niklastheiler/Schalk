@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Callable, List, Optional
 from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
-from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea, QFrame, QHBoxLayout, QHeaderView, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
                             RoundMenu, SearchLineEdit, SubtitleLabel, TableView)
 
@@ -48,19 +48,45 @@ def notify_warning(parent, title: str, text: str = "", duration: int = 5000):
                     duration=duration, parent=parent.window())
 
 
-def keep_scrollbars_visible(view):
-    """
-    The Fluent overlay scroll bars are only 3 px wide and faint until hovered; keep them in their
-    expanded state (groove with arrows, wide and darker handle) so the scroll position is always visible.
-    """
-    for bar in (view.scrollDelagate.vScrollBar, view.scrollDelagate.hScrollBar):
-        bar.setHandleColor(QColor(0, 0, 0, 150), QColor(255, 255, 255, 170))
-        bar.collapse = lambda: None # never fall back to the thin state
-        bar._isExpanded = True
-        bar.groove.opacityAni.stop()
-        bar.groove.setOpacity(1)
-        bar.handle.setOpacity(1)
-        bar._onOpacityAniValueChanged()
+# Classic, always visible scroll bars. The Fluent overlay bars are a faint 3 px line until hovered.
+SCROLLBAR_STYLE = """
+QScrollBar:vertical { background: #EDEDED; width: 12px; margin: 0; border-radius: 6px; }
+QScrollBar:horizontal { background: #EDEDED; height: 12px; margin: 0; border-radius: 6px; }
+QScrollBar::handle:vertical { background: #A0A0A0; min-height: 36px; border-radius: 5px; margin: 1px; }
+QScrollBar::handle:horizontal { background: #A0A0A0; min-width: 36px; border-radius: 5px; margin: 1px; }
+QScrollBar::handle:hover { background: #707070; }
+QScrollBar::handle:pressed { background: #505050; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: none; }
+"""
+
+
+def style_scrollbars(area: QAbstractScrollArea):
+    area.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+    area.horizontalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+
+
+def use_classic_scrollbars(view):
+    """Replaces the Fluent overlay bars of a Fluent table with the classic bars (smooth wheel scrolling stays)."""
+    view.scrollDelagate.vScrollBar.setForceHidden(True)
+    view.scrollDelagate.hScrollBar.setForceHidden(True)
+    # The Fluent delegate overrides the policy setters, so call the Qt implementation directly
+    QAbstractScrollArea.setVerticalScrollBarPolicy(view, Qt.ScrollBarAsNeeded)
+    QAbstractScrollArea.setHorizontalScrollBarPolicy(view, Qt.ScrollBarAsNeeded)
+    style_scrollbars(view)
+
+
+def make_scrollable(content: QWidget) -> QScrollArea:
+    """Page content that scrolls when the window is smaller than the content (e.g. on laptops)."""
+    area = QScrollArea()
+    area.setWidget(content)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.NoFrame)
+    # Let the window background shine through instead of the default grey fill
+    area.viewport().setAutoFillBackground(False)
+    content.setAutoFillBackground(False)
+    style_scrollbars(area)
+    return area
 
 
 def confirm(parent, title: str, text: str) -> bool:
@@ -262,7 +288,7 @@ class ListPage(QWidget):
         self.proxy.setSourceModel(self.model)
 
         self.table = TableView(self)
-        keep_scrollbars_visible(self.table)
+        use_classic_scrollbars(self.table)
         self.table.setModel(self.proxy)
         header = self.table.horizontalHeader()
         header.setSectionsClickable(True)
