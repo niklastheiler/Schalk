@@ -22,6 +22,7 @@ def test_cashbook_rules(controller, tmp_path):
     assert c.get_cashbook_entry(entry).attachment_hash
     with pytest.raises(ValueError):
         c.add_cashbook_entry(datetime(2026, 10, 2), 9999, "x", "A", "Barentnahme Privat", 19)
+    assert c.finalize_cashbook() == 2
     c.storno_cashbook_entry(entry)
     assert c.get_cashbook_balance() == 500
     with pytest.raises(GoBDError):

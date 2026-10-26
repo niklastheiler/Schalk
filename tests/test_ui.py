@@ -84,6 +84,7 @@ def test_reminders_cashbook_customers(window, controller, qapp):
     cb.add_entry()
     qapp.processEvents()
     assert cb.model.rowCount() == 1 and "250,00" in cb.balanceLabel.text()
+    c.finalize_cashbook()
     cb.storno_entry(cb.model.record(0).id)
     qapp.processEvents()
     assert cb.model.rowCount() == 2
