@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from src.controllers.db_controller import DBController
 import os
 from src.utils.signal_bus import SignalBus
+from src.utils import paths
 
 
 class ReminderInterface(QWidget):
@@ -146,22 +147,20 @@ class ReminderInterface(QWidget):
         from datetime import datetime, timedelta
         now = datetime.now()
         
-        try:
-            payment_terms = int(self.db_controller.get_setting("payment_terms_days") or 14)
-        except ValueError:
-            payment_terms = 14
+        payment_terms = self.db_controller.get_payment_terms()
         
-        # Filter for open or overdue
+        # Only issued (finalized), unpaid and not cancelled invoices can be overdue
         overdue_invoices = []
         for inv in invoices:
+            if not self.db_controller.is_finalized(inv) or inv.status in ["Bezahlt", "Storniert"]:
+                continue
             inv_date = inv.invoice_date.replace(tzinfo=None) if inv.invoice_date else now
             delta = now - inv_date
             if inv.status == "Überfällig":
                 overdue_invoices.append(inv)
-            elif inv.status in ["Entwurf", "Offen"]:
-                if delta.days > payment_terms:
-                    overdue_invoices.append(inv)
-            elif inv.reminder_level > 0 and inv.status not in ["Archiviert", "Bezahlt"]:
+            elif inv.status in ["Offen", "Teilbezahlt"] and delta.days > payment_terms:
+                overdue_invoices.append(inv)
+            elif inv.reminder_level > 0:
                 overdue_invoices.append(inv)
         
         for i, inv in enumerate(overdue_invoices):
@@ -179,7 +178,7 @@ class ReminderInterface(QWidget):
                     row_color = "#FFF5C2" # Yellow
                 else:
                     row_color = "#FFD6D6" # Red (Since it was manually set to Überfällig, highlight it)
-            elif inv.status in ["Entwurf", "Offen"]:
+            elif inv.status in ["Offen", "Teilbezahlt"]:
                 if delta.days > payment_terms:
                     row_color = "#FFD6D6" # Red
                 elif delta.days > payment_terms - 7:
@@ -206,7 +205,7 @@ class ReminderInterface(QWidget):
             self.table.setItem(i, 4, create_item(due_date.strftime("%d.%m.%Y")))
             
             status_combo = ComboBox()
-            status_combo.addItems(["Entwurf", "Offen", "Bezahlt", "Überfällig"])
+            status_combo.addItems(["Offen", "Teilbezahlt", "Bezahlt", "Überfällig"])
             status_combo.setCurrentText(inv.status)
             
             status_combo.currentTextChanged.connect(lambda text, inv_id=inv.id: self.change_invoice_status(inv_id, text))
@@ -273,10 +272,12 @@ class ReminderInterface(QWidget):
 
     def change_invoice_status(self, invoice_id, new_status):
         if not new_status: return
-        self.db_controller.update_invoice_status(invoice_id, new_status)
-        
-        # Invalidate cache so DB is fresh
-        self.db_controller.invalidate_cache()
+        success, message = self.db_controller.update_invoice_status(invoice_id, new_status)
+        if not success:
+            InfoBar.error("Nicht erlaubt", message, position=InfoBarPosition.TOP, duration=6000, parent=self.window())
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self.load_data)
+            return
         
         from PySide6.QtCore import Qt
         # Update row visuals instead of reloading table
@@ -332,97 +333,87 @@ class ReminderInterface(QWidget):
     def _do_generate_reminder(self, invoice_id, level, btn=None, print_only=False):
         from src.utils.pdf_generator import PDFGenerator
         import os
-        from src.models.database import Invoice
-        from datetime import datetime, timezone
-        
-        with self.db_controller.get_session() as session:
-            inv = session.query(Invoice).filter(Invoice.id == invoice_id).first()
-            if inv:
-                try:
-                    import tempfile
-                    pdf_gen = PDFGenerator(self.db_controller)
+        inv = self.db_controller.get_invoice(invoice_id)
+        if inv:
+            try:
+                import tempfile
+                pdf_gen = PDFGenerator(self.db_controller)
+                
+                if print_only:
+                    filepath = os.path.join(tempfile.gettempdir(), f"print_mahnung_{level}_{inv.invoice_number}.pdf")
+                else:
+                    filepath = paths.desktop_path(f"Mahnung_{level}_{inv.invoice_number}.pdf")
                     
-                    if print_only:
-                        filepath = os.path.join(tempfile.gettempdir(), f"print_mahnung_{level}_{inv.invoice_number}.pdf")
-                    else:
-                        filepath = os.path.join(os.path.expanduser("~"), "Desktop", f"Mahnung_{level}_{inv.invoice_number}.pdf")
+                pdf_gen.generate_reminder_pdf(inv, filepath, level)
+                
+                if not print_only:
+                    self.db_controller.record_reminder(invoice_id, level)
+                
+                if print_only:
+                    os.startfile(filepath, "print")
+                else:
+                    InfoBar.success(
+                        title="Mahnung Erstellt",
+                        content=f"Die Mahnung wurde als PDF auf dem Desktop gespeichert:\n{filepath}",
+                        orient=Qt.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP_RIGHT,
+                        duration=5000,
+                        parent=self.window()
+                    )
+                    # Recreate the button container exactly like in load_data
+                    # to guarantee perfectly clean layout and no animation artifacts
+                    target_row = -1
+                    for row in range(self.table.rowCount()):
+                        item = self.table.item(row, 0)
+                        if item and item.data(Qt.UserRole) == invoice_id:
+                            target_row = row
+                            break
+                            
+                    if target_row != -1:
+                        from qfluentwidgets import PushButton
+                        new_btn = PushButton(f"{level + 1}. Mahnung erstellen (in 14 Tagen)")
+                        new_btn.setFixedSize(240, 32)
+                        new_btn.setEnabled(False)
+                        new_btn.setToolTip("Nächste Mahnung in 14 Tagen möglich")
+                        new_btn.clicked.connect(lambda checked=False, i_id=invoice_id, l=level+1, b=new_btn: self.generate_reminder(i_id, l, b))
                         
-                    pdf_gen.generate_reminder_pdf(inv, filepath, level)
-                    
-                    if not print_only:
-                        inv.status = "Überfällig"
-                        inv.reminder_level = level
-                        inv.last_reminder_date = datetime.now(timezone.utc)
-                        session.commit()
-                        self.db_controller.db.save()
-                        self.db_controller.invalidate_cache()
-                        SignalBus.get().dataChanged.emit()
-                    
-                    if print_only:
-                        os.startfile(filepath, "print")
-                    else:
-                        InfoBar.success(
-                            title="Mahnung Erstellt",
-                            content=f"Die Mahnung wurde als PDF auf dem Desktop gespeichert:\n{filepath}",
-                            orient=Qt.Horizontal,
-                            isClosable=True,
-                            position=InfoBarPosition.TOP_RIGHT,
-                            duration=5000,
-                            parent=self.window()
-                        )
-                        # Recreate the button container exactly like in load_data
-                        # to guarantee perfectly clean layout and no animation artifacts
-                        target_row = -1
+                        from PySide6.QtWidgets import QWidget, QHBoxLayout
+                        act_container = QWidget()
+                        act_container.setStyleSheet("background-color: transparent;")
+                        act_lay = QHBoxLayout(act_container)
+                        act_lay.setContentsMargins(0, 0, 20, 0)
+                        act_lay.setAlignment(Qt.AlignCenter)
+                        act_lay.addWidget(new_btn)
+                        
+                        self.table.setCellWidget(target_row, 6, act_container)
+                        
+                        # Also update row status and color directly if possible
                         for row in range(self.table.rowCount()):
                             item = self.table.item(row, 0)
                             if item and item.data(Qt.UserRole) == invoice_id:
-                                target_row = row
+                                combo_container = self.table.cellWidget(row, 5)
+                                if combo_container:
+                                    combo = combo_container.layout().itemAt(0).widget()
+                                    combo.blockSignals(True)
+                                    combo.setCurrentText("Überfällig")
+                                    combo.blockSignals(False)
+                                from PySide6.QtGui import QBrush, QColor
+                                for col in range(5):
+                                    self.table.item(row, col).setBackground(QBrush(QColor("#FFD6D6")))
                                 break
-                                
-                        if target_row != -1:
-                            from qfluentwidgets import PushButton
-                            new_btn = PushButton(f"{level + 1}. Mahnung erstellen (in 14 Tagen)")
-                            new_btn.setFixedSize(240, 32)
-                            new_btn.setEnabled(False)
-                            new_btn.setToolTip("Nächste Mahnung in 14 Tagen möglich")
-                            new_btn.clicked.connect(lambda checked=False, i_id=invoice_id, l=level+1, b=new_btn: self.generate_reminder(i_id, l, b))
-                            
-                            from PySide6.QtWidgets import QWidget, QHBoxLayout
-                            act_container = QWidget()
-                            act_container.setStyleSheet("background-color: transparent;")
-                            act_lay = QHBoxLayout(act_container)
-                            act_lay.setContentsMargins(0, 0, 20, 0)
-                            act_lay.setAlignment(Qt.AlignCenter)
-                            act_lay.addWidget(new_btn)
-                            
-                            self.table.setCellWidget(target_row, 6, act_container)
-                            
-                            # Also update row status and color directly if possible
-                            for row in range(self.table.rowCount()):
-                                item = self.table.item(row, 0)
-                                if item and item.data(Qt.UserRole) == invoice_id:
-                                    combo_container = self.table.cellWidget(row, 5)
-                                    if combo_container:
-                                        combo = combo_container.layout().itemAt(0).widget()
-                                        combo.blockSignals(True)
-                                        combo.setCurrentText("Überfällig")
-                                        combo.blockSignals(False)
-                                    from PySide6.QtGui import QBrush, QColor
-                                    for col in range(5):
-                                        self.table.item(row, col).setBackground(QBrush(QColor("#FFD6D6")))
-                                    break
-                        if btn:
-                            btn.blockSignals(False)
-                except Exception as e:
                     if btn:
                         btn.blockSignals(False)
-                    InfoBar.error(
-                        title="Fehler",
-                        content=f"Die PDF konnte nicht erstellt werden: {str(e)}",
-                        orient=Qt.Horizontal,
-                        isClosable=True,
-                        position=InfoBarPosition.TOP,
-                        duration=8000,
-                        parent=self.window()
-                    )
+            except Exception as e:
+                if btn:
+                    btn.blockSignals(False)
+                InfoBar.error(
+                    title="Fehler",
+                    content=f"Die PDF konnte nicht erstellt werden: {str(e)}",
+                    orient=Qt.Horizontal,
+                    isClosable=True,
+                    position=InfoBarPosition.TOP,
+                    duration=8000,
+                    parent=self.window()
+                )
 

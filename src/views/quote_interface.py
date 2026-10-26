@@ -1,7 +1,8 @@
 from qfluentwidgets import ComboBox, InfoBar, InfoBarPosition, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel, TableWidget
 from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt
-from src.controllers.db_controller import DBController
+from src.controllers.db_controller import DBController, GoBDError
+from src.utils import paths
 import os
 from src.views.quote_editor import QuoteEditor
 from src.utils.signal_bus import SignalBus
@@ -273,7 +274,7 @@ class QuoteInterface(QWidget):
                     if print_only:
                         filepath = os.path.join(tempfile.gettempdir(), f"print_quote_{quote.quote_number}.pdf")
                     else:
-                        filepath = os.path.join(os.path.expanduser("~"), "Desktop", f"Angebot_{quote.quote_number}.pdf")
+                        filepath = paths.desktop_path(f"Angebot_{quote.quote_number}.pdf")
                     
                     pdf_gen = PDFGenerator(self.db_controller)
                     pdf_gen.generate_quote_pdf(quote, filepath)
@@ -335,7 +336,11 @@ class QuoteInterface(QWidget):
         msgBox.setDefaultButton(QMessageBox.No)
         
         if msgBox.exec() == QMessageBox.Yes:
-            success = self.db_controller.delete_quote(quote_id)
+            try:
+                success = self.db_controller.delete_quote(quote_id)
+            except GoBDError as e:
+                InfoBar.error("Nicht erlaubt", str(e), position=InfoBarPosition.TOP, parent=self.window())
+                return
             if success:
                 # Find and remove row instantly for performance
                 for row in range(self.table.rowCount()):

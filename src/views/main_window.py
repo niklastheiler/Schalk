@@ -1,5 +1,3 @@
-from src.controllers.db_controller import DBController
-
 from PySide6.QtCore import Qt, QSize, QTimer, QEventLoop
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
@@ -55,6 +53,20 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
+
+    def check_integrity_on_startup(self):
+        """GoBD: warn immediately if booked data or archived documents were altered outside the app."""
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        problems = self.db_controller.verify_integrity()
+        if problems:
+            InfoBar.error(
+                title="GoBD-Integritätsprüfung",
+                content=f"{len(problems)} Abweichung(en) gefunden. Details unter Einstellungen > Sicherheit & GoBD.",
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=-1,
+                parent=self
+            )
 
     def initWindow(self):
         self.resize(1200, 800)

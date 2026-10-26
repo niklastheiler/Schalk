@@ -3,7 +3,8 @@ from qfluentwidgets import CheckBox
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, DatePicker, InfoBar, InfoBarPosition, LineEdit, PrimaryPushButton, PushButton, SubtitleLabel, TableWidget
 from PySide6.QtCore import QDate, Qt
-from src.controllers.db_controller import DBController
+from src.controllers.db_controller import DBController, GoBDError, DRAFT_PREFIX
+from src.utils.calculations import calculate_totals, item_total
 from datetime import datetime, timezone
 
 class InvoiceEditor(QWidget):
@@ -181,7 +182,10 @@ class InvoiceEditor(QWidget):
         invoice = self.db_controller.get_invoice(invoice_id)
         if not invoice: return
         
-        self.titleLabel.setText(f"Rechnung {invoice.invoice_number} bearbeiten")
+        if invoice.invoice_number.startswith(DRAFT_PREFIX):
+            self.titleLabel.setText("Rechnungsentwurf bearbeiten")
+        else:
+            self.titleLabel.setText(f"Rechnung {invoice.invoice_number} bearbeiten")
         
         # Set Customer
         for i in range(self.customerCombo.count()):
@@ -203,6 +207,11 @@ class InvoiceEditor(QWidget):
             self.table.cellWidget(row, 1).setText(f"{item.quantity:.2f}".replace('.', ','))
             self.table.cellWidget(row, 2).setText(item.unit)
             self.table.cellWidget(row, 3).setText(f"{item.unit_price:.2f}".replace('.', ','))
+            # Fields without an input column are carried along so saving a draft doesn't drop them
+            title_widget = self.table.cellWidget(row, 0)
+            title_widget.item_description = item.description
+            title_widget.item_discount = item.discount_percent or 0.0
+            title_widget.item_tax = item.tax_percent if item.tax_percent is not None else 19.0
             
         if getattr(invoice, 'credit_amount', 0.0) > 0:
             self.creditCheck.setChecked(True)
@@ -213,9 +222,11 @@ class InvoiceEditor(QWidget):
             
         self.update_totals()
         
-        if invoice.status == "Archiviert":
+        # GoBD: finalized invoices are immutable
+        if self.db_controller.is_finalized(invoice):
             self.set_read_only(True)
-            self.titleLabel.setText(f"Rechnung {invoice.invoice_number} (Archiviert)")
+            suffix = "Archiviert" if invoice.archived_at else "festgeschrieben"
+            self.titleLabel.setText(f"Rechnung {invoice.invoice_number} ({suffix})")
 
     def set_read_only(self, read_only: bool):
         self.saveBtn.setVisible(not read_only)
@@ -233,10 +244,10 @@ class InvoiceEditor(QWidget):
         self.creditDescEdit.setEnabled(not read_only)
         
         for row in range(self.table.rowCount()):
-            for col in range(5):
+            for col in range(4):
                 widget = self.table.cellWidget(row, col)
                 if widget: widget.setEnabled(not read_only)
-            del_btn = self.table.cellWidget(row, 5)
+            del_btn = self.table.cellWidget(row, 4)
             if del_btn: del_btn.setVisible(not read_only)
 
     def load_customers(self):
@@ -272,6 +283,7 @@ class InvoiceEditor(QWidget):
         
         title_edit = LineEdit()
         title_edit.setFixedHeight(widget_height)
+        title_edit.textChanged.connect(self.update_totals)
         
         from PySide6.QtGui import QDoubleValidator
         from PySide6.QtCore import QLocale
@@ -338,51 +350,49 @@ class InvoiceEditor(QWidget):
                 self.update_totals()
                 break
 
-    def update_totals(self):
-        net_total = 0.0
-        tax19_total = 0.0
-        tax7_total = 0.0
-        
+    def _collect_items(self) -> list:
+        items = []
         for row in range(self.table.rowCount()):
+            title_widget = self.table.cellWidget(row, 0)
+            title = title_widget.text()
+            if not title: continue
             try:
-                qty_widget = self.table.cellWidget(row, 1)
-                price_widget = self.table.cellWidget(row, 3)
-                if qty_widget and price_widget:
-                    try:
-                        qty = float(qty_widget.text().replace(',', '.'))
-                    except ValueError:
-                        qty = 1.0
-                    try:
-                        price = float(price_widget.text().replace(',', '.'))
-                    except ValueError:
-                        price = 0.0
-                    tax = 19.0
-                    
-                    net = qty * price
-                    net_total += net
-                    
-                    tax_amount = net * (tax / 100)
-                    if tax == 19.0:
-                        tax19_total += tax_amount
-                    elif tax == 7.0:
-                        tax7_total += tax_amount
-            except Exception as e:
-                pass
-                
-        credit_amount = 0.0
-        if self.creditCheck.isChecked():
-            try:
-                credit_amount = float(self.creditAmountEdit.text().replace(',', '.'))
+                qty = float(self.table.cellWidget(row, 1).text().replace(',', '.'))
             except ValueError:
-                pass
-                
-        # Gutschrift als Netto-Abzug behandeln, aber `net_total` bleibt unangetastet
-        if credit_amount > 0 and tax19_total > 0:
-            tax19_total -= credit_amount * 0.19
+                qty = 1.0
+            unit = self.table.cellWidget(row, 2).text()
+            try:
+                price = float(self.table.cellWidget(row, 3).text().replace(',', '.'))
+            except ValueError:
+                price = 0.0
+            discount = getattr(title_widget, 'item_discount', 0.0)
             
-        gross_total = net_total - credit_amount + tax19_total + tax7_total
+            items.append({
+                "title": title,
+                "description": getattr(title_widget, 'item_description', None),
+                "quantity": qty,
+                "unit": unit,
+                "unit_price": price,
+                "discount_percent": discount,
+                "tax_percent": getattr(title_widget, 'item_tax', 19.0),
+                "total_price": item_total(qty, price, discount)
+            })
+        return items
+
+    def _credit_amount(self) -> float:
+        if not self.creditCheck.isChecked():
+            return 0.0
+        try:
+            return max(0.0, float(self.creditAmountEdit.text().replace(',', '.')))
+        except ValueError:
+            return 0.0
+
+    def update_totals(self):
+        # Rows without a title are ignored here exactly like when saving
+        credit_amount = self._credit_amount()
+        totals = calculate_totals(self._collect_items(), credit_amount)
         
-        self.netTotalLabel.setText(f"Nettobetrag: {net_total:.2f} €")
+        self.netTotalLabel.setText(f"Nettobetrag: {totals['net_amount']:.2f} €")
         
         if credit_amount > 0:
             self.creditTotalLabel.setText(f"abzgl. Gutschrift: {credit_amount:.2f} €")
@@ -390,13 +400,13 @@ class InvoiceEditor(QWidget):
         else:
             self.creditTotalLabel.hide()
             
-        if tax19_total > 0 or tax7_total > 0:
-            self.tax19Label.setText(f"zzgl. MwSt: {(tax19_total + tax7_total):.2f} €")
+        if totals['tax_amount'] > 0:
+            self.tax19Label.setText(f"zzgl. MwSt: {totals['tax_amount']:.2f} €")
             self.tax19Label.show()
         else:
             self.tax19Label.hide()
             
-        self.grossTotalLabel.setText(f"Gesamtbetrag: {gross_total:.2f} €")
+        self.grossTotalLabel.setText(f"Gesamtbetrag: {totals['gross_amount']:.2f} €")
 
     def save_invoice(self):
         if not self.companyEdit.text().strip() and not self.nameEdit.text().strip():
@@ -443,29 +453,7 @@ class InvoiceEditor(QWidget):
             )
             
         # 2. Collect Items
-        items = []
-        for row in range(self.table.rowCount()):
-            title = self.table.cellWidget(row, 0).text()
-            if not title: continue
-            try:
-                qty = float(self.table.cellWidget(row, 1).text().replace(',', '.'))
-            except ValueError:
-                qty = 1.0
-            unit = self.table.cellWidget(row, 2).text()
-            try:
-                price = float(self.table.cellWidget(row, 3).text().replace(',', '.'))
-            except ValueError:
-                price = 0.0
-            tax = 19.0
-            
-            items.append({
-                "title": title,
-                "quantity": qty,
-                "unit": unit,
-                "unit_price": price,
-                "tax_percent": tax,
-                "total_price": qty * price
-            })
+        items = self._collect_items()
             
         # 3. Create or Update Invoice
         qdate_inv = self.invoiceDate.date
@@ -473,15 +461,18 @@ class InvoiceEditor(QWidget):
         inv_date = datetime(qdate_inv.year(), qdate_inv.month(), qdate_inv.day(), tzinfo=timezone.utc)
         del_date = datetime(qdate_del.year(), qdate_del.month(), qdate_del.day(), tzinfo=timezone.utc)
         
-        credit_amount = 0.0
-        credit_desc = ""
-        if self.creditCheck.isChecked():
-            try:
-                credit_amount = float(self.creditAmountEdit.text().replace(',', '.'))
-                credit_desc = self.creditDescEdit.text()
-            except ValueError:
-                pass
+        credit_amount = self._credit_amount()
+        credit_desc = self.creditDescEdit.text() if credit_amount > 0 else ""
         
+        try:
+            saved_id = self._save(customer_id, inv_date, del_date, items, credit_amount, credit_desc)
+        except GoBDError as e:
+            InfoBar.error("Nicht erlaubt", str(e), orient=Qt.Horizontal, isClosable=True,
+                          position=InfoBarPosition.TOP, duration=6000, parent=self.window())
+            return
+        self.saved.emit(saved_id)
+
+    def _save(self, customer_id, inv_date, del_date, items, credit_amount, credit_desc):
         if self.current_invoice_id:
             self.db_controller.update_invoice(
                 invoice_id=self.current_invoice_id,
@@ -492,15 +483,13 @@ class InvoiceEditor(QWidget):
                 credit_amount=credit_amount,
                 credit_desc=credit_desc
             )
-            saved_id = self.current_invoice_id
-        else:
-            saved_id = self.db_controller.create_invoice(
-                customer_id=customer_id,
-                invoice_date=inv_date,
-                delivery_date=del_date,
-                items=items,
-                credit_amount=credit_amount,
-                credit_desc=credit_desc
-            )
-        self.saved.emit(saved_id)
+            return self.current_invoice_id
+        return self.db_controller.create_invoice(
+            customer_id=customer_id,
+            invoice_date=inv_date,
+            delivery_date=del_date,
+            items=items,
+            credit_amount=credit_amount,
+            credit_desc=credit_desc
+        )
 

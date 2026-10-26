@@ -203,7 +203,7 @@ class AnalysisInterface(QWidget):
                     inv_out[inv.invoice_date.month] += inv.gross_amount
                     
             # 2. Incoming Invoices
-            for inv in session.query(IncomingInvoice.date, IncomingInvoice.amount, IncomingInvoice.invoice_type).all():
+            for inv in session.query(IncomingInvoice.date, IncomingInvoice.amount, IncomingInvoice.invoice_type).filter(IncomingInvoice.cancelled_at == None).all():
                 if inv.date and inv.date.year == year:
                     if inv.invoice_type == "Lieferant":
                         inv_lief[inv.date.month] += inv.amount

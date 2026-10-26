@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLay
 from src.controllers.db_controller import DBController
 import os
 from src.utils.signal_bus import SignalBus
+from src.utils import paths
 
 
 class SettingsInterface(QWidget):
@@ -179,6 +180,8 @@ class SettingsInterface(QWidget):
         
         backupTitle = SubtitleLabel("Backup & Wiederherstellung")
         backupDesc = BodyLabel("Exportiere alle Daten (inkl. Datenbank und PDFs) als ZIP-Archiv oder stelle ein Backup wieder her.\n"
+                               "Die Datenbank im Backup wird mit einem Backup-Passwort verschlüsselt und lässt sich damit auf jedem Computer einspielen.\n"
+                               "Wichtig: Der Datenbankschlüssel ist an dieses Windows-Benutzerkonto gebunden. Bei Neuinstallation oder PC-Wechsel sind die Daten nur über ein Backup wiederherstellbar.\n"
                                "Achtung: Beim Import werden alle bestehenden Daten überschrieben und das Programm startet neu!")
         
         btnLayout = QHBoxLayout()
@@ -200,13 +203,31 @@ class SettingsInterface(QWidget):
         
         self.stackedWidget.addWidget(self.backupTab)
         
+        # Sicherheit & GoBD Tab
+        self.securityTab = QWidget()
+        securityLayout = QVBoxLayout(self.securityTab)
+        securityLayout.setContentsMargins(36, 12, 36, 36)
+        
+        securityLayout.addWidget(SubtitleLabel("GoBD-Integritätsprüfung"))
+        securityLayout.addWidget(BodyLabel("Prüft die Hash-Ketten von Rechnungen und Kassenbuch sowie alle archivierten Dateien auf Veränderungen."))
+        checkBtnLayout = QHBoxLayout()
+        self.integrityBtn = PushButton("Integrität prüfen")
+        self.integrityBtn.clicked.connect(self.check_integrity)
+        checkBtnLayout.addWidget(self.integrityBtn)
+        checkBtnLayout.addStretch(1)
+        securityLayout.addLayout(checkBtnLayout)
+        securityLayout.addStretch(1)
+        
+        self.stackedWidget.addWidget(self.securityTab)
+        
         # Link pivot to stackedWidget
         self.pivot.addItem("firm", "Firmendaten", lambda: self.stackedWidget.setCurrentIndex(0))
         self.pivot.addItem("bank", "Bankdaten", lambda: self.stackedWidget.setCurrentIndex(1))
         self.pivot.addItem("payment", "Zahlungsziel", lambda: self.stackedWidget.setCurrentIndex(2))
         self.pivot.addItem("datev", "DATEV", lambda: self.stackedWidget.setCurrentIndex(3))
         self.pivot.addItem("backup", "Backup", lambda: self.stackedWidget.setCurrentIndex(4))
-        self._pivot_items = ["firm", "bank", "payment", "datev", "backup"]
+        self.pivot.addItem("security", "Sicherheit & GoBD", lambda: self.stackedWidget.setCurrentIndex(5))
+        self._pivot_items = ["firm", "bank", "payment", "datev", "backup", "security"]
         self.pivot.setCurrentItem("firm")
         self.stackedWidget.currentChanged.connect(lambda i: self.pivot.setCurrentItem(self._pivot_items[i]))
         
@@ -254,26 +275,14 @@ class SettingsInterface(QWidget):
         self.datevAccountKasseEdit.setText(kasse if kasse else "1000")
 
     def save_settings(self):
-        self.db_controller.set_setting("company_name", self.companyNameEdit.text())
-        self.db_controller.set_setting("first_name", self.firstNameEdit.text())
-        self.db_controller.set_setting("last_name", self.lastNameEdit.text())
-        self.db_controller.set_setting("address", self.addressEdit.text())
-        self.db_controller.set_setting("postal_code", self.postalCodeEdit.text())
-        self.db_controller.set_setting("city", self.cityEdit.text())
-        self.db_controller.set_setting("tax_id", self.taxIdEdit.text())
-        self.db_controller.set_setting("vat_id", self.vatIdEdit.text())
-        self.db_controller.set_setting("email", self.emailEdit.text())
-        self.db_controller.set_setting("phone", self.phoneEdit.text())
-        
-        # Handle logo
-        import os
         import shutil
+        # Handle logo
         logo_path = self.logoPathEdit.text()
-        if logo_path and os.path.exists(logo_path) and not logo_path.startswith(os.path.abspath("assets")):
+        if logo_path and os.path.exists(logo_path) and not os.path.abspath(logo_path).startswith(paths.ASSETS_DIR):
             # Copy to assets folder to ensure it stays available
-            os.makedirs("assets", exist_ok=True)
+            os.makedirs(paths.ASSETS_DIR, exist_ok=True)
             ext = os.path.splitext(logo_path)[1]
-            new_path = os.path.abspath(os.path.join("assets", f"logo{ext}"))
+            new_path = os.path.join(paths.ASSETS_DIR, f"logo{ext}")
             try:
                 shutil.copy2(logo_path, new_path)
                 logo_path = new_path
@@ -281,18 +290,29 @@ class SettingsInterface(QWidget):
             except Exception as e:
                 print(f"Error copying logo: {e}")
                 
-        self.db_controller.set_setting("logo_path", logo_path)
-        
-        self.db_controller.set_setting("bank_name", self.bankNameEdit.text())
-        self.db_controller.set_setting("iban", self.ibanEdit.text())
-        self.db_controller.set_setting("bic", self.bicEdit.text())
-        self.db_controller.set_setting("account_holder", self.accountHolderEdit.text())
-        
-        self.db_controller.set_setting("payment_terms_days", str(self.paymentTermsSpin.value()))
-        self.db_controller.set_setting("datev_berater", self.datevBeraterEdit.text())
-        self.db_controller.set_setting("datev_mandant", self.datevMandantEdit.text())
-        self.db_controller.set_setting("datev_account_19", self.datevAccount19Edit.text())
-        self.db_controller.set_setting("datev_account_kasse", self.datevAccountKasseEdit.text())
+        # One save for all values (each save re-encrypts the whole database)
+        self.db_controller.set_settings({
+            "company_name": self.companyNameEdit.text(),
+            "first_name": self.firstNameEdit.text(),
+            "last_name": self.lastNameEdit.text(),
+            "address": self.addressEdit.text(),
+            "postal_code": self.postalCodeEdit.text(),
+            "city": self.cityEdit.text(),
+            "tax_id": self.taxIdEdit.text(),
+            "vat_id": self.vatIdEdit.text(),
+            "email": self.emailEdit.text(),
+            "phone": self.phoneEdit.text(),
+            "logo_path": logo_path,
+            "bank_name": self.bankNameEdit.text(),
+            "iban": self.ibanEdit.text(),
+            "bic": self.bicEdit.text(),
+            "account_holder": self.accountHolderEdit.text(),
+            "payment_terms_days": str(self.paymentTermsSpin.value()),
+            "datev_berater": self.datevBeraterEdit.text(),
+            "datev_mandant": self.datevMandantEdit.text(),
+            "datev_account_19": self.datevAccount19Edit.text(),
+            "datev_account_kasse": self.datevAccountKasseEdit.text(),
+        })
         
         InfoBar.success(
             title="Gespeichert",
@@ -331,23 +351,23 @@ class SettingsInterface(QWidget):
         if not path:
             return
             
-        try:
-            # 1. Force save DB
-            self.db_controller.db.save()
+        from src.views.backup_password_dialog import BackupPasswordDialog
+        dialog = BackupPasswordDialog("create", parent=self.window())
+        if not dialog.exec():
+            return
             
-            # 2. Create temp dir
+        try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Copy DB
-                if os.path.exists("schalk.enc.db"):
-                    shutil.copy2("schalk.enc.db", os.path.join(tmpdir, "schalk.enc.db"))
+                # Database encrypted with the backup password (portable to other computers)
+                self.db_controller.db.export_backup(os.path.join(tmpdir, "schalk.backup"), dialog.password())
                 
                 # Copy app_data if exists
-                if os.path.exists("app_data"):
-                    shutil.copytree("app_data", os.path.join(tmpdir, "app_data"))
+                if os.path.exists(paths.APP_DATA_DIR):
+                    shutil.copytree(paths.APP_DATA_DIR, os.path.join(tmpdir, "app_data"))
                     
                 # Copy assets if exists (for logos)
-                if os.path.exists("assets"):
-                    shutil.copytree("assets", os.path.join(tmpdir, "assets"))
+                if os.path.exists(paths.ASSETS_DIR):
+                    shutil.copytree(paths.ASSETS_DIR, os.path.join(tmpdir, "assets"))
                 
                 # Zip it
                 base_name = os.path.splitext(path)[0]
@@ -406,31 +426,41 @@ class SettingsInterface(QWidget):
                 shutil.unpack_archive(path, tmpdir)
                 
                 # Verify valid backup
-                if not os.path.exists(os.path.join(tmpdir, "schalk.enc.db")):
-                    raise Exception("Die ZIP-Datei enthält keine gültige Datenbank (schalk.enc.db).")
+                db_file = os.path.join(tmpdir, "schalk.backup")
+                if not os.path.exists(db_file):
+                    raise Exception("Die ZIP-Datei enthält keine gültige Datenbank (schalk.backup).")
+                with open(db_file, "rb") as f:
+                    data = f.read()
                     
+                from src.models.database import WrongPasswordError
+                from src.views.backup_password_dialog import BackupPasswordDialog
                 import time
-                # Replace DB
-                if os.path.exists("schalk.enc.db"):
+                message = ""
+                while True:
+                    dialog = BackupPasswordDialog("unlock", message, parent=self.window())
+                    if not dialog.exec():
+                        return
                     try:
-                        os.remove("schalk.enc.db")
-                    except PermissionError:
-                        os.rename("schalk.enc.db", f"schalk.enc.db.bak.{int(time.time())}")
-                shutil.copy2(os.path.join(tmpdir, "schalk.enc.db"), "schalk.enc.db")
+                        # Keep the current database as a backup copy instead of deleting it
+                        if os.path.exists(paths.DB_PATH):
+                            shutil.copy2(paths.DB_PATH, f"{paths.DB_PATH}.bak.{int(time.time())}")
+                        self.db_controller.db.restore_backup(data, dialog.password())
+                        break
+                    except WrongPasswordError as e:
+                        message = str(e)
                 
-                # Replace app_data
-                if os.path.exists(os.path.join(tmpdir, "app_data")):
-                    try:
-                        shutil.copytree(os.path.join(tmpdir, "app_data"), "app_data", dirs_exist_ok=True)
-                    except Exception as e:
-                        print("Ignored error copying app_data:", e)
-                    
-                # Replace assets
-                if os.path.exists(os.path.join(tmpdir, "assets")):
-                    try:
-                        shutil.copytree(os.path.join(tmpdir, "assets"), "assets", dirs_exist_ok=True)
-                    except Exception as e:
-                        print("Ignored error copying assets:", e)
+                def copy_missing(src, dst):
+                    # Archived documents are read-only and must not be overwritten
+                    if not os.path.exists(dst):
+                        shutil.copy2(src, dst)
+                
+                # Restore app_data and assets
+                for folder, target in (("app_data", paths.APP_DATA_DIR), ("assets", paths.ASSETS_DIR)):
+                    if os.path.exists(os.path.join(tmpdir, folder)):
+                        try:
+                            shutil.copytree(os.path.join(tmpdir, folder), target, dirs_exist_ok=True, copy_function=copy_missing)
+                        except Exception as e:
+                            print(f"Ignored error copying {folder}:", e)
                     
             # Restart Application
             os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -446,4 +476,15 @@ class SettingsInterface(QWidget):
                 parent=self.window()
             )
 
-
+    def check_integrity(self):
+        from qfluentwidgets import MessageBox
+        problems = self.db_controller.verify_integrity()
+        if problems:
+            text = "\n".join(problems[:20])
+            if len(problems) > 20:
+                text += f"\n… und {len(problems) - 20} weitere"
+            box = MessageBox("Integritätsprüfung: Abweichungen gefunden", text, self.window())
+        else:
+            box = MessageBox("Integritätsprüfung", "Alle Hash-Ketten und archivierten Dateien sind unverändert.", self.window())
+        box.cancelButton.hide()
+        box.exec()

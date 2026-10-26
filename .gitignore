@@ -1,4 +1,8 @@
 error.log
 schalk.enc.db
+schalk.enc.db.bak.*
+schalk.key
+app_data/
+assets/receipts/
 __pycache__
 venv

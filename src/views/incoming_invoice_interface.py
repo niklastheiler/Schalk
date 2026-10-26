@@ -1,5 +1,4 @@
 import os
-import shutil
 import re
 from datetime import datetime
 from pypdf import PdfReader
@@ -155,9 +154,10 @@ class IncomingInvoiceInterface(QWidget):
         view_action.triggered.connect(lambda: self.open_pdf(inv.file_path))
         menu.addAction(view_action)
         
-        delete_action = Action(FIF.DELETE, "Löschen", self)
-        delete_action.triggered.connect(lambda: self.delete_invoice(inv_id))
-        menu.addAction(delete_action)
+        if not inv.cancelled_at:
+            cancel_action = Action(FIF.CANCEL, "Stornieren", self)
+            cancel_action.triggered.connect(lambda: self.cancel_invoice(inv_id))
+            menu.addAction(cancel_action)
             
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
@@ -213,9 +213,14 @@ class IncomingInvoiceInterface(QWidget):
             first_item = QTableWidgetItem(inv.date.strftime('%d.%m.%Y'))
             first_item.setData(Qt.UserRole, inv.id)
             self.table.setItem(i, 0, first_item)
-            self.table.setItem(i, 1, QTableWidgetItem(inv.description))
+            description = f"{inv.description} (storniert)" if inv.cancelled_at else inv.description
+            self.table.setItem(i, 1, QTableWidgetItem(description))
             self.table.setItem(i, 2, QTableWidgetItem(f"{inv.amount:.2f} €"))
             self.table.setRowHeight(i, 45)
+            if inv.cancelled_at:
+                from PySide6.QtGui import QBrush, QColor
+                for col in range(3):
+                    self.table.item(i, col).setBackground(QBrush(QColor("#E6E6E6")))
             
         
         # Update year filter
@@ -243,15 +248,20 @@ class IncomingInvoiceInterface(QWidget):
         else:
             InfoBar.error("Fehler", "PDF Datei nicht gefunden.", position=InfoBarPosition.TOP, parent=self.window())
             
-    def delete_invoice(self, invoice_id):
-        if self.db_controller.delete_incoming_invoice(invoice_id):
-            # Find and remove row instantly for performance
-            for row in range(self.table.rowCount()):
-                item = self.table.item(row, 0)
-                if item and item.data(Qt.UserRole) == invoice_id:
-                    self.table.removeRow(row)
-                    break
-            InfoBar.success("Erfolg", "Rechnung gelöscht.", position=InfoBarPosition.TOP, parent=self.window())
+    def cancel_invoice(self, invoice_id):
+        from qfluentwidgets import MessageBox
+        box = MessageBox(
+            "Rechnung stornieren",
+            "Die Rechnung wird als storniert markiert und nicht mehr exportiert. Datensatz und PDF bleiben gemäß GoBD aufbewahrt.\n\nFortfahren?",
+            self.window()
+        )
+        box.yesButton.setText("Ja")
+        box.cancelButton.setText("Nein")
+        if not box.exec():
+            return
+        if self.db_controller.cancel_incoming_invoice(invoice_id):
+            self.load_data()
+            InfoBar.success("Erfolg", "Rechnung storniert.", position=InfoBarPosition.TOP, parent=self.window())
             
     def extract_data_from_pdf(self, path):
         amount = 0.0
@@ -260,22 +270,16 @@ class IncomingInvoiceInterface(QWidget):
             reader = PdfReader(path)
             text = ""
             for page in reader.pages:
-                text += page.extract_text() + "\n"
+                text += (page.extract_text() or "") + "\n"
                 
             # Regex to find amount
             # Matches variations of Gesamtbetrag, Rechnungsbetrag, Endbetrag followed by number
-            amount_match = re.search(r'(?:Gesamtbetrag|Rechnungsbetrag|Endbetrag|Summe|Total|Betrag)[\s\S]{0,30}?(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})', text, re.IGNORECASE)
+            amount_match = re.search(r'(?:Gesamtbetrag|Rechnungsbetrag|Endbetrag|Summe|Total|Betrag)[\s\S]{0,30}?(\d{1,3}(?:[.,]\d{3})+[.,]\d{2}|\d+[.,]\d{2})', text, re.IGNORECASE)
             if amount_match:
-                amt_str = amount_match.group(1).replace('.', '').replace(',', '.')
-                # If the string was something like 1.234.56, replacing . gives 123456 which is wrong if , was used for thousands.
-                # Standard DE format: 1.234,56 -> 1234.56
-                # If there are no dots but a comma: 1234,56 -> 1234.56
-                # Let's clean it up robustly:
+                # The last separator is the decimal separator: 1.234,56 (DE) or 1,234.56 (EN) -> 1234.56
                 val = amount_match.group(1)
-                if ',' in val and '.' in val:
-                    val = val.replace('.', '').replace(',', '.')
-                elif ',' in val:
-                    val = val.replace(',', '.')
+                dec_pos = max(val.rfind(','), val.rfind('.'))
+                val = re.sub(r'[.,]', '', val[:dec_pos]) + '.' + val[dec_pos + 1:]
                 amount = float(val)
                 
             # Regex to find date
@@ -310,20 +314,13 @@ class IncomingInvoiceInterface(QWidget):
             if dialog.exec():
                 data = dialog.get_data()
                 
-                # Save PDF internally
-                dest_dir = os.path.abspath("app_data/incoming_invoices")
-                os.makedirs(dest_dir, exist_ok=True)
-                safe_filename = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{filename}"
-                dest_path = os.path.join(dest_dir, safe_filename)
-                shutil.copy2(filepath, dest_path)
-                
-                # Save to DB
+                # The controller archives the PDF read-only and stores its hash (GoBD)
                 self.db_controller.add_incoming_invoice(
                     invoice_type=self.invoice_type,
                     date=data["date"],
                     amount=data["amount"],
                     description=data["description"],
-                    file_path=dest_path
+                    source_path=filepath
                 )
                 
         self.load_data()
@@ -333,7 +330,7 @@ class IncomingInvoiceInterface(QWidget):
         from src.utils.datev_generator import DatevGenerator
         
         # We export the currently visible invoices
-        invoices = self.db_controller.get_incoming_invoices(self.invoice_type)
+        invoices = self.db_controller.get_incoming_invoices(self.invoice_type, include_cancelled=False)
         if not invoices:
             InfoBar.warning("Keine Daten", "Es gibt keine Rechnungen für den Export.", position=InfoBarPosition.TOP, parent=self.window())
             return

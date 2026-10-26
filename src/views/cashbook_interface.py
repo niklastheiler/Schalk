@@ -3,9 +3,10 @@ from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QDoubleValidator
 from qfluentwidgets import SubtitleLabel, SearchLineEdit, PrimaryPushButton, BodyLabel, DatePicker, LineEdit, ComboBox, TransparentToolButton, TableWidget, InfoBar, InfoBarPosition, PushButton, FluentIcon as FIF
 import os
-import shutil
 from datetime import datetime
 from src.utils.signal_bus import SignalBus
+from src.utils import paths
+from src.controllers.db_controller import GoBDError
 
 
 class CashbookInterface(QWidget):
@@ -82,6 +83,15 @@ class CashbookInterface(QWidget):
         amountLayout.addWidget(self.amountSpin)
         formLayout.addLayout(amountLayout)
         
+        # Beschreibung (Buchungstext)
+        descLayout = QVBoxLayout()
+        descLayout.addWidget(BodyLabel("Beschreibung"))
+        self.descEdit = LineEdit()
+        self.descEdit.setPlaceholderText("Buchungstext")
+        self.descEdit.setMinimumWidth(200)
+        descLayout.addWidget(self.descEdit)
+        formLayout.addLayout(descLayout)
+        
         # Art
         typeLayout = QVBoxLayout()
         typeLayout.addWidget(BodyLabel("Art"))
@@ -118,8 +128,8 @@ class CashbookInterface(QWidget):
         
         # Table
         self.table = TableWidget(self)
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(['Datum', 'Beleg-Nr', 'Art', 'Betrag (€)', 'GoBD-Hash', 'Anhang'])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(['Datum', 'Beleg-Nr', 'Art', 'Beschreibung', 'Betrag (€)', 'GoBD-Hash', 'Anhang'])
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         # Performance optimization for scrolling with setCellWidget
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -136,39 +146,67 @@ class CashbookInterface(QWidget):
         
         self.load_data()
 
+    def _entry_at_row(self, row):
+        id_item = self.table.item(row, 0)
+        if not id_item: return None
+        return self.db_controller.get_cashbook_entry(id_item.data(Qt.UserRole))
+
     def show_context_menu(self, pos):
         item = self.table.itemAt(pos)
         if not item: return
-        row = item.row()
-        
-        # In cashbook, we don't have ID in the table directly, we'd need to match or just use the row index
-        # Let's get the entries list from db to match the row
-        entries = self.db_controller.get_cashbook_entries()
-        if row >= len(entries): return
-        entry = entries[row] # This assumes table order matches get_cashbook_entries
-        
-        if not (entry.description and entry.description != "Keine Angabe" and os.path.exists(entry.description)):
-            return
+        entry = self._entry_at_row(item.row())
+        if not entry: return
+        attachment = self.db_controller.get_cashbook_attachment(entry)
             
         from qfluentwidgets import RoundMenu, Action
-        from qfluentwidgets import FluentIcon as FIF
         menu = RoundMenu(parent=self.table)
         
-        view_action = Action(FIF.DOCUMENT, "Beleg öffnen", self)
-        view_action.triggered.connect(lambda: os.startfile(entry.description) if os.name == 'nt' else None)
-        menu.addAction(view_action)
+        if attachment:
+            view_action = Action(FIF.DOCUMENT, "Beleg öffnen", self)
+            view_action.triggered.connect(lambda: self.open_attachment(attachment))
+            menu.addAction(view_action)
             
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        if not entry.is_storno:
+            storno_action = Action(FIF.CANCEL, "Stornieren (Gegenbuchung)", self)
+            storno_action.triggered.connect(lambda: self.storno_entry(entry.id))
+            menu.addAction(storno_action)
+            
+        if menu.actions():
+            menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def on_item_double_clicked(self, item):
-        row = item.row()
-        entries = self.db_controller.get_cashbook_entries()
-        if row >= len(entries): return
-        entry = entries[row]
-        
-        if entry.description and entry.description != "Keine Angabe" and os.path.exists(entry.description):
-            if os.name == 'nt':
-                os.startfile(entry.description)
+        entry = self._entry_at_row(item.row())
+        if not entry: return
+        attachment = self.db_controller.get_cashbook_attachment(entry)
+        if attachment:
+            self.open_attachment(attachment)
+
+    def open_attachment(self, path):
+        if os.path.isfile(path):
+            os.startfile(path)
+        else:
+            InfoBar.error("Fehler", "Beleg-Datei nicht gefunden.", position=InfoBarPosition.TOP, parent=self.window())
+
+    def storno_entry(self, entry_id):
+        from qfluentwidgets import MessageBox
+        entry = self.db_controller.get_cashbook_entry(entry_id)
+        if not entry: return
+        box = MessageBox(
+            "Eintrag stornieren",
+            f"Für {entry.receipt_number} wird eine Storno-Gegenbuchung mit heutigem Datum erstellt. Der ursprüngliche Eintrag bleibt unverändert erhalten.\n\nFortfahren?",
+            self.window()
+        )
+        box.yesButton.setText("Ja")
+        box.cancelButton.setText("Nein")
+        if not box.exec():
+            return
+        try:
+            self.db_controller.storno_cashbook_entry(entry_id)
+        except (GoBDError, ValueError) as e:
+            InfoBar.error("Fehler", str(e), position=InfoBarPosition.TOP, duration=5000, parent=self.window())
+            return
+        InfoBar.success("Storniert", "Die Storno-Gegenbuchung wurde erstellt.", position=InfoBarPosition.TOP, parent=self.window())
+        self.load_data()
 
     def attach_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -191,55 +229,36 @@ class CashbookInterface(QWidget):
             return
             
         entry_type = self.typeCombo.currentText()
-        
-        # Check negative balance
-        if entry_type != "Einnahme":
-            # Calculate current total balance
-            all_entries = self.db_controller.get_cashbook_entries()
-            current_balance = sum([e.amount if e.entry_type == "Einnahme" else -e.amount for e in all_entries])
-            if current_balance - amount < 0:
-                InfoBar.error("Fehler", "Der Kassenbestand darf nicht negativ werden!", position=InfoBarPosition.TOP, parent=self.window())
-                return
-            
         date_obj = self.datePicker.date.toPython()
         dt = datetime.combine(date_obj, datetime.min.time())
         
-        # Handle attachment
-        desc = "Keine Angabe"
-        if self.attachment_path and os.path.exists(self.attachment_path):
-            receipts_dir = os.path.join(os.getcwd(), "assets", "receipts")
-            os.makedirs(receipts_dir, exist_ok=True)
-            filename = os.path.basename(self.attachment_path)
-            new_path = os.path.join(receipts_dir, filename)
-            shutil.copy2(self.attachment_path, new_path)
-            desc = new_path
-            
-        self.db_controller.add_cashbook_entry(
-            entry_date=dt,
-            amount=amount,
-            description=desc,
-            category="Allgemein",
-            entry_type=entry_type,
-            tax_percent=19.0
-        )
+        attachment = self.attachment_path if self.attachment_path and os.path.exists(self.attachment_path) else None
+        try:
+            # The controller archives the receipt read-only under a unique name and checks the balance
+            self.db_controller.add_cashbook_entry(
+                entry_date=dt,
+                amount=amount,
+                description=self.descEdit.text().strip(),
+                category="Allgemein",
+                entry_type=entry_type,
+                tax_percent=19.0,
+                attachment_source=attachment
+            )
+        except ValueError as e:
+            InfoBar.error("Fehler", str(e), position=InfoBarPosition.TOP, parent=self.window())
+            return
         
         InfoBar.success("Erfolg", "GoBD-konformer Eintrag gespeichert", position=InfoBarPosition.TOP, parent=self.window())
         self.amountSpin.setText("")
+        self.descEdit.clear()
         self.attachment_path = ""
         self.attachLabel.setText("Kein Anhang")
         self.load_data()
 
-
-
     def update_balance(self, entries):
-        balance = 0.0
-        for entry in entries:
-            if entry.entry_type == 'Einnahme':
-                balance += entry.amount
-            else:
-                balance -= entry.amount
+        balance = sum(self.db_controller.cashbook_signed_amount(e) for e in entries)
         
-        self.balanceLabel.setText(f'{balance:.2f} €')
+        self.balanceLabel.setText(f'{balance:.2f} €'.replace('.', ','))
 
     def showEvent(self, event):
 
@@ -262,7 +281,7 @@ class CashbookInterface(QWidget):
             match_search = False
             if not search_text: match_search = True
             else:
-                for col in range(1, 4):
+                for col in range(1, 5):
                     item = self.table.item(i, col)
                     if item and search_text in item.text().lower():
                         match_search = True
@@ -311,30 +330,32 @@ class CashbookInterface(QWidget):
 
 
     def _update_or_insert_row(self, i, entry, is_new=False):
-        from PySide6.QtWidgets import QTableWidgetItem, QWidget, QHBoxLayout
-        from PySide6.QtCore import Qt
-        from qfluentwidgets import PushButton
+        from PySide6.QtWidgets import QTableWidgetItem
+        from PySide6.QtGui import QBrush, QColor
                 
         if is_new:
             self.table.insertRow(i)
-        self.table.setItem(i, 0, QTableWidgetItem(entry.entry_date.strftime("%d.%m.%Y")))
+        first_item = QTableWidgetItem(entry.entry_date.strftime("%d.%m.%Y"))
+        first_item.setData(Qt.UserRole, entry.id)
+        self.table.setItem(i, 0, first_item)
         self.table.setItem(i, 1, QTableWidgetItem(entry.receipt_number))
-        self.table.setItem(i, 2, QTableWidgetItem(entry.entry_type))
+        self.table.setItem(i, 2, QTableWidgetItem(entry.entry_type + (" (Storno)" if entry.is_storno else "")))
         
-        amount_str = f"{entry.amount:.2f}".replace(".", ",") + " €"
-        if entry.entry_type in ["Ausgabe", "Barentnahme Privat", "Barentnahme Firma"]:
-            amount_str = f"-{amount_str}"
-        self.table.setItem(i, 3, QTableWidgetItem(amount_str))
+        self.table.setItem(i, 3, QTableWidgetItem(entry.description or ""))
+        
+        signed = self.db_controller.cashbook_signed_amount(entry)
+        self.table.setItem(i, 4, QTableWidgetItem(f"{signed:.2f}".replace(".", ",") + " €"))
         
         hash_abbr = f"{entry.hash_chain[:8]}...{entry.hash_chain[-8:]}" if entry.hash_chain else "Kein Hash"
-        self.table.setItem(i, 4, QTableWidgetItem(hash_abbr))
+        self.table.setItem(i, 5, QTableWidgetItem(hash_abbr))
         
-        if entry.description and entry.description != "Keine Angabe" and os.path.exists(entry.description):
-            self.table.setItem(i, 5, QTableWidgetItem("Vorhanden"))
-        else:
-            self.table.setItem(i, 5, QTableWidgetItem("-"))
-            
+        attachment = self.db_controller.get_cashbook_attachment(entry)
+        self.table.setItem(i, 6, QTableWidgetItem("Vorhanden" if attachment else "-"))
         
+        if entry.is_storno:
+            for col in range(7):
+                self.table.item(i, col).setBackground(QBrush(QColor("#E6E6E6")))
+
     def show_datev_export_dialog(self):
         from src.models.database import CashbookEntry
         from src.utils.datev_generator import DatevGenerator
@@ -376,7 +397,7 @@ class CashbookInterface(QWidget):
                     return
                     
                 filename = f"DATEV_Export_Kassenbuch_{year}_{month:02d}.zip"
-                filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
+                filepath = paths.desktop_path(filename)
                 
                 generator = DatevGenerator(self.db_controller)
                 if generator.generate_cashbook_export(export_entries, filepath, month, year):

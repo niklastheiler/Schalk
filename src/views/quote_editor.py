@@ -2,7 +2,8 @@ from PySide6.QtCore import Signal
 from qfluentwidgets import ComboBox, DatePicker, InfoBar, InfoBarPosition, LineEdit, PrimaryPushButton, PushButton, SubtitleLabel, TableWidget
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
-from src.controllers.db_controller import DBController
+from src.controllers.db_controller import DBController, GoBDError
+from src.utils.calculations import calculate_totals, item_total
 from datetime import datetime, timezone
 
 class QuoteEditor(QWidget):
@@ -161,10 +162,15 @@ class QuoteEditor(QWidget):
             self.table.cellWidget(row, 1).setText(f"{item.quantity:.2f}".replace('.', ','))
             self.table.cellWidget(row, 2).setText(item.unit)
             self.table.cellWidget(row, 3).setText(f"{item.unit_price:.2f}".replace('.', ','))
+            # Fields without an input column are carried along so saving doesn't drop them
+            title_widget = self.table.cellWidget(row, 0)
+            title_widget.item_description = item.description
+            title_widget.item_discount = item.discount_percent or 0.0
+            title_widget.item_tax = item.tax_percent if item.tax_percent is not None else 19.0
             
         self.update_totals()
         
-        if quote.status == "Archiviert":
+        if quote.archived_at:
             self.set_read_only(True)
             self.titleLabel.setText(f"Angebot {quote.quote_number} (Archiviert)")
 
@@ -180,10 +186,10 @@ class QuoteEditor(QWidget):
         self.quoteDate.setEnabled(not read_only)
         
         for row in range(self.table.rowCount()):
-            for col in range(5):
+            for col in range(4):
                 widget = self.table.cellWidget(row, col)
                 if widget: widget.setEnabled(not read_only)
-            del_btn = self.table.cellWidget(row, 5)
+            del_btn = self.table.cellWidget(row, 4)
             if del_btn: del_btn.setVisible(not read_only)
 
     def load_customers(self):
@@ -218,6 +224,7 @@ class QuoteEditor(QWidget):
         
         title_edit = LineEdit()
         title_edit.setFixedHeight(widget_height)
+        title_edit.textChanged.connect(self.update_totals)
         
         from PySide6.QtGui import QDoubleValidator
         from PySide6.QtCore import QLocale
@@ -283,48 +290,47 @@ class QuoteEditor(QWidget):
                 self.update_totals()
                 break
 
-    def update_totals(self):
-        net_total = 0.0
-        tax19_total = 0.0
-        tax7_total = 0.0
-        
+    def _collect_items(self) -> list:
+        items = []
         for row in range(self.table.rowCount()):
+            title_widget = self.table.cellWidget(row, 0)
+            title = title_widget.text()
+            if not title: continue
             try:
-                qty_widget = self.table.cellWidget(row, 1)
-                price_widget = self.table.cellWidget(row, 3)
-                if qty_widget and price_widget:
-                    try:
-                        qty = float(qty_widget.text().replace(',', '.'))
-                    except ValueError:
-                        qty = 1.0
-                    try:
-                        price = float(price_widget.text().replace(',', '.'))
-                    except ValueError:
-                        price = 0.0
-                    tax = 19.0
-                    
-                    net = qty * price
-                    net_total += net
-                    
-                    tax_amount = net * (tax / 100)
-                    if tax == 19.0:
-                        tax19_total += tax_amount
-                    elif tax == 7.0:
-                        tax7_total += tax_amount
-            except Exception as e:
-                pass
-                
-        gross_total = net_total + tax19_total + tax7_total
+                qty = float(self.table.cellWidget(row, 1).text().replace(',', '.'))
+            except ValueError:
+                qty = 1.0
+            unit = self.table.cellWidget(row, 2).text()
+            try:
+                price = float(self.table.cellWidget(row, 3).text().replace(',', '.'))
+            except ValueError:
+                price = 0.0
+            discount = getattr(title_widget, 'item_discount', 0.0)
+            
+            items.append({
+                "title": title,
+                "description": getattr(title_widget, 'item_description', None),
+                "quantity": qty,
+                "unit": unit,
+                "unit_price": price,
+                "discount_percent": discount,
+                "tax_percent": getattr(title_widget, 'item_tax', 19.0),
+                "total_price": item_total(qty, price, discount)
+            })
+        return items
+
+    def update_totals(self):
+        totals = calculate_totals(self._collect_items())
         
-        self.netTotalLabel.setText(f"Nettobetrag: {net_total:.2f} €")
+        self.netTotalLabel.setText(f"Nettobetrag: {totals['net_amount']:.2f} €")
         
-        if tax19_total > 0:
-            self.tax19Label.setText(f"zzgl. 19% MwSt: {tax19_total:.2f} €")
+        if totals['tax_amount'] > 0:
+            self.tax19Label.setText(f"zzgl. MwSt: {totals['tax_amount']:.2f} €")
             self.tax19Label.show()
         else:
             self.tax19Label.hide()
             
-        self.grossTotalLabel.setText(f"Gesamtbetrag: {gross_total:.2f} €")
+        self.grossTotalLabel.setText(f"Gesamtbetrag: {totals['gross_amount']:.2f} €")
 
     def save_quote(self):
         if not self.companyEdit.text().strip() and not self.nameEdit.text().strip():
@@ -369,40 +375,23 @@ class QuoteEditor(QWidget):
                 city=city
             )
             
-        items = []
-        for row in range(self.table.rowCount()):
-            title = self.table.cellWidget(row, 0).text()
-            if not title: continue
-            try:
-                qty = float(self.table.cellWidget(row, 1).text().replace(',', '.'))
-            except ValueError:
-                qty = 1.0
-            unit = self.table.cellWidget(row, 2).text()
-            try:
-                price = float(self.table.cellWidget(row, 3).text().replace(',', '.'))
-            except ValueError:
-                price = 0.0
-            tax = 19.0
-            
-            items.append({
-                "title": title,
-                "quantity": qty,
-                "unit": unit,
-                "unit_price": price,
-                "tax_percent": tax,
-                "total_price": qty * price
-            })
+        items = self._collect_items()
             
         qdate_q = self.quoteDate.date
         q_date = datetime(qdate_q.year(), qdate_q.month(), qdate_q.day(), tzinfo=timezone.utc)
         
         if self.current_quote_id:
-            self.db_controller.update_quote(
-                quote_id=self.current_quote_id,
-                customer_id=customer_id,
-                quote_date=q_date,
-                items=items
-            )
+            try:
+                self.db_controller.update_quote(
+                    quote_id=self.current_quote_id,
+                    customer_id=customer_id,
+                    quote_date=q_date,
+                    items=items
+                )
+            except GoBDError as e:
+                InfoBar.error("Nicht erlaubt", str(e), orient=Qt.Horizontal, isClosable=True,
+                              position=InfoBarPosition.TOP, duration=6000, parent=self.window())
+                return
             saved_id = self.current_quote_id
         else:
             saved_id = self.db_controller.create_quote(
