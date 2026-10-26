@@ -22,9 +22,9 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -61,7 +61,7 @@ jobs:
           $lines[($start + 1)..($end - 1)] | Set-Content release-notes.md -Encoding utf8
 
       # Runs on other branches only build and test (to try out the workflow), nothing is published
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: ${{ env.TAG }}
