@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from PySide6.QtWidgets import QStyleOptionViewItem
 from qfluentwidgets import ComboBox, MessageBox
 
 DAY = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -42,11 +43,19 @@ def test_status_dropdown_in_the_list(controller, seller, qapp, monkeypatch):
     qapp.processEvents()
     combo = page.table.indexWidget(index) or next(w for w in page.table.viewport().findChildren(ComboBox) if w.isVisible())
     assert [combo.itemText(i) for i in range(combo.count())] == ["Entwurf", "Offen"]
+    # The cell text must not shine through the open (semi-transparent) combo box
+    delegate = page.table.itemDelegateForColumn(status_column)
+    option = QStyleOptionViewItem()
+    delegate.initStyleOption(option, index)
+    assert option.text == ""
     combo.setCurrentIndex(1) # choose "Offen"
     for _ in range(5):
         qapp.processEvents()
     invoice = controller.get_invoice(invoice_id)
     assert invoice.status == "Offen" and controller.is_finalized(invoice)
+    option = QStyleOptionViewItem()
+    delegate.initStyleOption(option, page.proxy.index(0, status_column))
+    assert option.text == "Offen" # shown again once the combo box is closed
     # A cancelled invoice offers no drop-down
     controller.update_invoice_status(invoice_id, "Storniert")
     qapp.processEvents()
