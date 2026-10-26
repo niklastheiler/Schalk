@@ -15,6 +15,7 @@ from src.views.common import fmt_money, keep_scrollbars_visible, notify_error
 SMALL_BUSINESS_REASON = EXEMPTION_REASON_PRESETS[0]
 
 COL_TITLE, COL_QTY, COL_UNIT, COL_PRICE, COL_TAX, COL_DELETE = range(6)
+ITEM_WIDGET_HEIGHT = 33
 
 
 def _german_number(value: float) -> str:
@@ -282,18 +283,23 @@ class DocumentEditor(QWidget):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        title_edit = LineEdit()
-        qty_edit = LineEdit()
+        # Created with the table as parent: a parentless widget would briefly pop up as its own window
+        parent = self.table.viewport()
+        title_edit = LineEdit(parent)
+        qty_edit = LineEdit(parent)
         qty_edit.setValidator(_number_validator())
-        unit_edit = LineEdit()
-        price_edit = LineEdit()
+        unit_edit = LineEdit(parent)
+        price_edit = LineEdit(parent)
         price_edit.setValidator(_number_validator())
-        tax_combo = ComboBox()
+        tax_combo = ComboBox(parent)
         for rate in TAX_RATE_OPTIONS:
             tax_combo.addItem(format_rate(rate), userData=rate)
-        delete_btn = PushButton("X")
+        delete_btn = PushButton("X", parent)
         delete_btn.setFixedWidth(40)
         delete_btn.clicked.connect(lambda: self._delete_row(title_edit))
+        # All fields of a row share the same height
+        for widget in (title_edit, qty_edit, unit_edit, price_edit, tax_combo, delete_btn):
+            widget.setFixedHeight(ITEM_WIDGET_HEIGHT)
 
         if item is not None:
             title_edit.setText(item.title)
