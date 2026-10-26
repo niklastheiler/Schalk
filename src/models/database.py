@@ -1,16 +1,12 @@
 import os
-import base64
 import logging
 import sqlite3
-import struct
 import threading
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.pool import StaticPool
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 logger = logging.getLogger(__name__)
 
@@ -194,15 +190,6 @@ class KeyMissingError(Exception):
 
 # Database file: MAGIC | Fernet token (key protected by Windows DPAPI, see key_store)
 FILE_MAGIC = b"SCHALK2\x00"
-# Backup file: MAGIC | iterations (uint32 BE) | salt (16 bytes) | Fernet token (key derived from backup password)
-BACKUP_MAGIC = b"SCHALKB\x00"
-SALT_SIZE = 16
-KDF_ITERATIONS = 600_000
-
-
-def _derive_fernet(password: bytes, salt: bytes, iterations: int) -> Fernet:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
-    return Fernet(base64.urlsafe_b64encode(kdf.derive(password)))
 
 
 def _write_atomic(path: str, payload: bytes):
@@ -361,34 +348,22 @@ class DatabaseManager:
         self._writer.close()
         self._closed = True
 
-    # --- Backups (portable, protected by a backup password instead of the machine-bound key) ---
-    def export_backup(self, path: str, password: str):
-        salt = os.urandom(SALT_SIZE)
-        token = _derive_fernet(password.encode("utf-8"), salt, KDF_ITERATIONS).encrypt(self.memory_conn.serialize())
-        _write_atomic(path, BACKUP_MAGIC + struct.pack(">I", KDF_ITERATIONS) + salt + token)
+    # --- Backups (see src/utils/backup.py; portable, protected by a backup password) ---
+    def snapshot(self) -> bytes:
+        return self.memory_conn.serialize()
 
-    def restore_backup(self, data: bytes, password: str):
+    def restore_database(self, plaintext: bytes):
         """
-        Replaces the database file with the backup, re-encrypted with this computer's key.
+        Replaces the database file with a backup, re-encrypted with this computer's key.
         The application must be restarted afterwards.
         """
-        if not data.startswith(BACKUP_MAGIC):
-            raise ValueError("Die Datei ist kein gültiges Schalk-Backup.")
-        offset = len(BACKUP_MAGIC)
-        (iterations,) = struct.unpack(">I", data[offset:offset + 4])
-        salt = data[offset + 4:offset + 4 + SALT_SIZE]
-        try:
-            plaintext = _derive_fernet((password or "").encode("utf-8"), salt, iterations).decrypt(data[offset + 4 + SALT_SIZE:])
-        except InvalidToken:
-            raise WrongPasswordError("Falsches Backup-Passwort.")
-
         # Make sure it really is a SQLite database before replacing anything
         check = sqlite3.connect(':memory:')
         try:
             check.deserialize(plaintext)
             check.execute("SELECT count(*) FROM sqlite_master").fetchone()
         except sqlite3.DatabaseError:
-            raise ValueError("Die Datei enthält keine gültige Datenbank.")
+            raise ValueError("Das Backup enthält keine gültige Datenbank.")
         finally:
             check.close()
 
