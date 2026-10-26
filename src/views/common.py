@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
-from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea, QFrame, QHBoxLayout, QHeaderView, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
@@ -236,6 +236,7 @@ class ChoiceDelegate(TableItemDelegate):
         super().__init__(table)
         self.column = column
         self._row_state = table.delegate # tracks hover/selection for the whole row
+        self._editing = None # cell whose combo box is open; its text must not shine through
 
     def _choices(self, index) -> list:
         record = index.data(RECORD_ROLE)
@@ -245,9 +246,21 @@ class ChoiceDelegate(TableItemDelegate):
         state = self._row_state
         self.hoverRow, self.pressedRow, self.selectedRows = state.hoverRow, state.pressedRow, state.selectedRows
         super().paint(painter, option, index)
-        if self._choices(index):
+        if not self._is_editing(index) and self._choices(index):
             rect = option.rect
             FIF.ARROW_DOWN.render(painter, QRectF(rect.right() - 20, rect.center().y() - 4, 9, 9))
+
+    def _is_editing(self, index) -> bool:
+        return self._editing is not None and self._editing.isValid() and self._editing == QPersistentModelIndex(index)
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if self._is_editing(index):
+            option.text = ""
+
+    def destroyEditor(self, editor, index):
+        self._editing = None
+        super().destroyEditor(editor, index)
 
     def createEditor(self, parent, option, index):
         choices = self._choices(index)
@@ -266,6 +279,7 @@ class ChoiceDelegate(TableItemDelegate):
             # Applied after the editor is gone: the change refreshes (and resets) the table
             QTimer.singleShot(0, lambda: self.column.on_choice(record, value))
         combo.currentIndexChanged.connect(chosen)
+        self._editing = QPersistentModelIndex(index)
         QTimer.singleShot(0, combo._showComboMenu)
         return combo
 
