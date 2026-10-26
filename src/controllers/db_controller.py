@@ -25,6 +25,7 @@ QUOTE_STATUSES = ["Entwurf", "Versendet", "Angenommen", "Abgelehnt", "Abgelaufen
 CASHBOOK_TYPES = ["Einnahme", "Barentnahme Privat", "Barentnahme Firma"]
 CASHBOOK_INCOME_TYPES = ["Einnahme"]
 DEFAULT_PAYMENT_TERMS = 14
+NO_ITEMS_MESSAGE = "Rechnungen und Angebote benötigen mindestens eine Position mit Bezeichnung."
 
 # Settings that describe the seller; they are frozen into every finalized invoice
 SELLER_KEYS = ["company_name", "first_name", "last_name", "address", "postal_code", "city", "tax_id", "vat_id",
@@ -361,6 +362,8 @@ class DBController:
     # --- Items (shared by invoices and quotes) ---
     @staticmethod
     def _normalize_items(items: list) -> list:
+        if not items:
+            raise ValueError(NO_ITEMS_MESSAGE)
         normalized = []
         for item in items:
             quantity = float(item.get('quantity', 1.0))
