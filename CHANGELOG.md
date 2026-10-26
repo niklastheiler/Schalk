@@ -12,6 +12,7 @@ Schwerpunkt: nachweisbar gültige E-Rechnungen.
 - **Automatische Prüfung bei jeder Änderung:** Alle Steuerfälle werden mit dem unabhängigen Mustang-Validator geprüft, einschließlich PDF/A-3 per veraPDF. Grenzfälle sind ebenfalls abgedeckt: Sonderzeichen und lange Texte, 40 Positionen mit gemischten Steuersätzen, seltene Einheiten, Bruchmengen und Rundung.
 - **Release nur nach bestandener Prüfung:** Eine neue Version wird erst gebaut und veröffentlicht, wenn alle Tests und die Mustang-Prüfung bestehen.
 - **Abhängigkeiten aktuell halten:** Dependabot schlägt wöchentlich gebündelte Updates der Python-Pakete und GitHub-Actions vor; jedes Update durchläuft die E-Rechnungs-Prüfung.
+- **Patch-Releases:** `tools/bump_version.py` setzt Version und Changelog-Abschnitt in einem Schritt, z. B. für ein schnelles Sicherheitsupdate.
 - **Prüfregeln aktuell halten:** Ein wöchentlicher Check meldet neue Versionen der offiziellen Prüfregeln und des Mustang-Validators als Issue. `tools/rule_updates.py --update` aktualisiert sie.
 
 ### Behoben
