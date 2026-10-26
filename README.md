@@ -29,7 +29,11 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 
 ## Neue Version veröffentlichen
 
-1. In `src/version.py` die `APP_VERSION` erhöhen und in `CHANGELOG.md` einen Abschnitt `## <Version>` anlegen.
+1. Version und Changelog vorbereiten, z. B. für ein Patch-Release nach einem Sicherheitsupdate:
+   ```powershell
+   python tools/bump_version.py 1.1.1 "Sicherheitsupdate: cryptography 50.0.1"
+   ```
+   Das setzt `APP_VERSION` in `src/version.py` und legt den Abschnitt in `CHANGELOG.md` an (jeder Text wird ein Eintrag). Die neue Version muss größer sein als die aktuelle.
 2. Nach dem Merge auf `main` unter GitHub → Actions → Release → „Run workflow“ starten (oder einen Tag pushen, z. B. `git tag v1.1` und `git push origin v1.1`).
 3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests) und veröffentlicht das Release mit ZIP-Datei und Changelog-Abschnitt.
 
