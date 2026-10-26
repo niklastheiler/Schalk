@@ -27,6 +27,7 @@ UninstallDisplayIcon={app}\Schalk.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\src\resources\icons\schalk.ico
 ; A running Schalk is closed before its files are replaced
 CloseApplications=yes
 RestartApplications=no

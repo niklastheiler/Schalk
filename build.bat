@@ -18,7 +18,7 @@ if %errorlevel% neq 0 (
     goto :error
 )
 
-pyinstaller --noconfirm --clean --windowed --name Schalk ^
+pyinstaller --noconfirm --clean --windowed --name Schalk --icon src\resources\icons\schalk.ico ^
     --collect-all saxonche ^
     --collect-data facturx ^
     --collect-data drafthorse ^
