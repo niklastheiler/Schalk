@@ -11,7 +11,11 @@ call venv\Scripts\activate.bat || goto :error
 python -m pip install --upgrade pip || goto :error
 python -m pip install -r requirements-dev.txt || goto :error
 
-python -m pytest -q tests || goto :error
+python -m pytest -q tests
+if errorlevel 1 (
+    echo Tests fehlgeschlagen ^(Exitcode %errorlevel%^)
+    goto :error
+)
 
 pyinstaller --noconfirm --clean --windowed --name Schalk ^
     --collect-all saxonche ^
@@ -20,7 +24,11 @@ pyinstaller --noconfirm --clean --windowed --name Schalk ^
     --collect-data reportlab ^
     --collect-data stdnum ^
     --collect-data qfluentwidgets ^
-    run.py || goto :error
+    run.py
+if errorlevel 1 (
+    echo PyInstaller fehlgeschlagen ^(Exitcode %errorlevel%^)
+    goto :error
+)
 
 echo.
 echo Fertig: dist\Schalk\Schalk.exe
