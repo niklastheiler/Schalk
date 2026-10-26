@@ -40,6 +40,7 @@ jobs:
       - name: ZIP und Release-Text erstellen
         shell: pwsh
         run: |
+          Copy-Item LICENSE dist/Schalk/LICENSE.txt
           Compress-Archive -Path dist/Schalk -DestinationPath "Schalk-$env:TAG-windows-x64.zip"
           # Section of this version from CHANGELOG.md (from "## <version>" up to the next "## ")
           $version = $env:TAG.TrimStart("v")
