@@ -14,7 +14,7 @@ from src.models.database import DatabaseManager, Setting, Customer, Invoice, Inv
 from src.utils.signal_bus import SignalBus
 from src.utils.calculations import calculate_totals, item_total
 from src.utils.tax import TAX_RATE_OPTIONS, has_zero_rate, vat_category, EXEMPTION_REQUIRED_MESSAGE
-from src.utils.archive import archive_file, verify_file
+from src.utils.archive import archive_file, is_pdf, verify_file
 from src.utils import paths
 
 logger = logging.getLogger(__name__)
@@ -253,6 +253,8 @@ class DBController:
             raise ValueError("Der Kassenbestand darf nicht negativ werden!")
 
         attachment_path, attachment_hash = None, None
+        if attachment_source and not is_pdf(attachment_source):
+            raise ValueError("Als Beleg sind nur PDF-Dateien erlaubt.")
         if attachment_source:
             attachment_path, attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR)
 
@@ -932,6 +934,8 @@ class DBController:
     # --- Incoming Invoices ---
     def add_incoming_invoice(self, invoice_type: str, date: datetime, amount: float, description: str, source_path: str,
                              user: str = None, einvoice_format: str = None, invoice_number: str = None, supplier_name: str = None) -> int:
+        if not (is_pdf(source_path) or (source_path.lower().endswith(".xml") and einvoice_format)):
+            raise ValueError("Eingangsrechnungen müssen als PDF oder als XRechnung (XML) vorliegen.")
         file_path, file_hash = archive_file(source_path, paths.INCOMING_INVOICES_DIR)
         with self.get_session() as session:
             entry = IncomingInvoice(

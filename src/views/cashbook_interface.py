@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout
 from qfluentwidgets import BodyLabel, ComboBox, DatePicker, FluentIcon as FIF, LineEdit, RoundMenu, SubtitleLabel, TransparentToolButton
 from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDError
 from src.utils import paths
+from src.utils.archive import is_pdf
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
 from src.views.document_editor import _number_validator, _parse_number
@@ -100,7 +101,10 @@ class CashbookInterface(ListPage):
             notify_error(self, "Fehler", "Beleg-Datei nicht gefunden.")
 
     def attach_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "Dokumente (*.pdf *.png *.jpg *.jpeg *.xml)")
+        path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "PDF-Dokumente (*.pdf)")
+        if path and not is_pdf(path):
+            notify_error(self, "Kein PDF", f"{os.path.basename(path)} ist keine PDF-Datei. Als Beleg sind nur PDFs erlaubt.")
+            return
         if path:
             self.attachment_path = path
             self.attachLabel.setText(os.path.basename(path))
