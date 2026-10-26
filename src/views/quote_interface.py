@@ -21,7 +21,7 @@ class QuoteListPage(ListPage):
         self.interface = interface
         self.c = c = interface.db_controller
         columns = [
-            Column("Datum", lambda q: fmt_date(q.quote_date), sort=lambda q: (_naive(q.quote_date), q.id), width=100, descending=True),
+            Column("Datum", lambda q: fmt_date(q.quote_date), sort=lambda q: (_naive(q.quote_date), q.id), width=115, descending=True),
             Column("Angebotsnummer", lambda q: q.quote_number, width=160, descending=True),
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT, descending=True),

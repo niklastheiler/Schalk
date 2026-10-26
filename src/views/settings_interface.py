@@ -66,7 +66,7 @@ class SettingsInterface(QWidget):
         self._add_tab("bank", "Bankdaten", self._form_tab(BANK_FIELDS))
         self._add_tab("payment", "Zahlungsziel", self._build_payment_tab())
         self._add_tab("backup", "Backup", self._build_backup_tab())
-        self._add_tab("security", "Sicherheit & GoBD", self._build_security_tab())
+        self._add_tab("security", "Sicherheit && GoBD", self._build_security_tab())
         self.pivot.setCurrentItem("firm")
 
         bottom = QHBoxLayout()

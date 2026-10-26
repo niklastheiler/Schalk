@@ -106,7 +106,7 @@ class IncomingInvoiceInterface(ListPage):
         self.db_controller = db_controller
         self.invoice_type = invoice_type # "Lieferant" or "Sonstige"
         columns = [
-            Column("Datum", lambda i: fmt_date(i.date), sort=lambda i: (i.date, i.id), width=100, descending=True),
+            Column("Datum", lambda i: fmt_date(i.date), sort=lambda i: (i.date, i.id), width=115, descending=True),
             Column("Lieferant", lambda i: i.supplier_name or "", width=220),
             Column("Rechnungs-Nr.", lambda i: i.invoice_number or "", width=150),
             Column("Beschreibung", lambda i: i.description + (" (storniert)" if i.cancelled_at else "")),
