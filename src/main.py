@@ -1,7 +1,9 @@
 import ctypes
 import logging
+import os
 import sys
 from PySide6.QtCore import QLockFile, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 from src.controllers.db_controller import DBController
 from src.models.database import DatabaseManager, KeyMissingError, WrongPasswordError
@@ -13,6 +15,7 @@ from src.version import APP_NAME, APP_VERSION
 
 logger = logging.getLogger(__name__)
 APP_ID = "Schalk.Rechnungsprogramm"
+APP_ICON = os.path.join(os.path.dirname(__file__), "resources", "icons", "schalk.ico")
 
 
 def _set_windows_app_id():
@@ -38,6 +41,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
+    app.setWindowIcon(QIcon(APP_ICON))
     install_german_translations(app)
 
     # Two instances would overwrite each other's changes in the encrypted database file
