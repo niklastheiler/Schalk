@@ -1,3 +1,4 @@
+import re
 import pytest
 from facturx import get_facturx_xml_from_pdf
 from einvoice_cases import CASES
@@ -25,3 +26,10 @@ def test_xrechnung_rules_detect_violations(controller, seller):
     broken = xml.replace(b"<ram:BuyerReference>04011000-12345-34</ram:BuyerReference>", b"")
     assert broken != xml
     assert any("BR-DE-15" in p for p in validate_xrechnung(broken)) # Leitweg-ID/buyer reference missing
+
+
+def test_units_are_mapped_to_un_ece_codes(controller, seller):
+    c = controller
+    xml = build_cii_xml(c.get_invoice(CASES["Einheiten_und_Rundung"](c)), c, "xrechnung").decode()
+    codes = re.findall(r'unitCode="([^"]+)"', xml)
+    assert codes == ["KGM", "MTR", "LTR", "KMT", "MON", "DAY", "C62"]

@@ -72,6 +72,37 @@ def storno(c):
     return next(i.id for i in c.get_invoices() if i.cancels_invoice_id == original)
 
 
+def special_characters(c):
+    """Characters that must be escaped in XML, umlauts, € sign, line breaks and very long texts."""
+    long_text = "Detaillierte Leistungsbeschreibung mit Umlauten (äöüß ÄÖÜ), Sonderzeichen <>&\"' und € – " * 8
+    return _invoice(c, dict(DOMESTIC, company_name="Müller & Söhne <Bau> GmbH & Co. KG", address="Straße des 17. Juni 1–3",
+                            email="rechnung@müller-bau.de".replace("ü", "ue")), [
+        {"title": "Planung „Phase 1“ & <Entwurf>", "description": long_text.strip() + "\nZweite Zeile\nDritte Zeile",
+         "quantity": 1, "unit": "Pauschale", "unit_price": 1250.0, "tax_percent": 19.0},
+        {"title": "Ø 50 mm Rohr – 'Sonderanfertigung'", "quantity": 12, "unit": "Meter", "unit_price": 7.35, "tax_percent": 19.0},
+    ])
+
+
+def many_items(c):
+    """40 positions with alternating rates and discounts plus a credit (sum rounding over many lines)."""
+    items = [{"title": f"Artikel {i:02d}", "quantity": 1 + i % 4, "unit": "Stück", "unit_price": 3.33 + i * 1.07,
+              "discount_percent": (0, 5, 12.5, 33)[i % 4], "tax_percent": (19.0, 7.0)[i % 2]} for i in range(40)]
+    return _invoice(c, DOMESTIC, items, credit_amount=17.89, credit_desc="Mengenrabatt")
+
+
+def units_and_rounding(c):
+    """Uncommon units, fractional quantities and prices with more than two decimal places."""
+    return _invoice(c, DOMESTIC, [
+        {"title": "Kies", "quantity": 2.375, "unit": "Kilogramm", "unit_price": 0.4375, "tax_percent": 19.0},
+        {"title": "Kabel", "quantity": 33.3, "unit": "Meter", "unit_price": 1.111, "discount_percent": 3, "tax_percent": 19.0},
+        {"title": "Heizöl", "quantity": 1234.5, "unit": "Liter", "unit_price": 0.9876, "tax_percent": 19.0},
+        {"title": "Anfahrt", "quantity": 87.6, "unit": "km", "unit_price": 0.3, "tax_percent": 19.0},
+        {"title": "Miete Gerüst", "quantity": 2.5, "unit": "Monat", "unit_price": 333.33, "tax_percent": 19.0},
+        {"title": "Leihgerät", "quantity": 3, "unit": "Tag", "unit_price": 0.01, "tax_percent": 19.0},
+        {"title": "Lebensmittel", "quantity": 7, "unit": "Stück", "unit_price": 0.995, "tax_percent": 7.0},
+    ])
+
+
 CASES = {
     "Standard_19_7_Rabatt_Gutschrift": standard,
     "Behoerde_Leitweg-ID": authority,
@@ -81,4 +112,7 @@ CASES = {
     "Innergemeinschaftliche_Lieferung": intra_community,
     "Ausfuhrlieferung": export,
     "Stornorechnung": storno,
+    "Sonderzeichen_lange_Texte": special_characters,
+    "Viele_Positionen_gemischt": many_items,
+    "Einheiten_und_Rundung": units_and_rounding,
 }

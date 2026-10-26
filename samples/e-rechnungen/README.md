@@ -15,6 +15,9 @@ Von Schalk erzeugte Rechnungen für alle unterstützten Steuerfälle, zum Prüfe
 | `Innergemeinschaftliche_Lieferung` | Steuerfreie Lieferung in die EU (§ 4 Nr. 1b UStG), Kunde in den Niederlanden |
 | `Ausfuhrlieferung` | Steuerfreie Ausfuhr (§ 4 Nr. 1a UStG), Kunde in der Schweiz |
 | `Stornorechnung` | Stornorechnung (Rechnungsart 381) zur Standardrechnung |
+| `Sonderzeichen_lange_Texte` | XML-Sonderzeichen (`<>&"'`), Umlaute, €, Zeilenumbrüche und sehr lange Beschreibungen |
+| `Viele_Positionen_gemischt` | 40 Positionen mit 19 % und 7 %, verschiedenen Rabatten und einer Gutschrift |
+| `Einheiten_und_Rundung` | Kilogramm, Meter, Liter, km, Monat, Tag, Bruchmengen und Preise mit mehr als zwei Nachkommastellen |
 
 Alle Firmen-, Kunden- und Bankdaten sind erfunden.
 
