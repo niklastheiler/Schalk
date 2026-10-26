@@ -80,7 +80,7 @@ python tools/rule_updates.py --update
 
 ## Abhängigkeiten
 
-Dependabot schlägt wöchentlich Updates der Python-Pakete und GitHub-Actions als gebündelte PRs vor (`.github/dependabot.yml`). Die PySide6-Pakete werden immer gemeinsam aktualisiert, weil ihre Versionen exakt übereinstimmen müssen. Jeder Update-PR durchläuft die Tests und die E-Rechnungs-Prüfung. Bei Updates von PySide6 oder PySide6-Fluent-Widgets vor dem Merge kurz die Oberfläche unter Windows durchklicken, die automatischen Tests decken sie nur teilweise ab.
+Dependabot schlägt wöchentlich Updates der Python-Pakete und GitHub-Actions als gebündelte PRs vor (`.github/dependabot.yml`). Die PySide6-Pakete werden immer gemeinsam aktualisiert, weil ihre Versionen exakt übereinstimmen müssen. Jeder Update-PR durchläuft die Tests und die E-Rechnungs-Prüfung. Ein Update landet erst mit dem nächsten Release bei den Nutzern; bei Sicherheitsupdates daher zeitnah ein Patch-Release veröffentlichen (siehe „Neue Version veröffentlichen“). Bei Updates von PySide6 oder PySide6-Fluent-Widgets vor dem Merge kurz die Oberfläche unter Windows durchklicken, die automatischen Tests decken sie nur teilweise ab.
 
 ## Tests
 
