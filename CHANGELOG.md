@@ -6,6 +6,7 @@
 - Monatliche Backup-Erinnerung beim Start: „Später“ oder „Backup jetzt erstellen“
 - Standard-Zahlungsziel lässt sich wieder eintragen (leer = 14 Tage)
 - Positionen: Eingabefelder springen beim Überfahren mit der Maus nicht mehr herum
+- Beschriftungen wie „Rechnungsdatum“ und „Kunde“ sind wieder gut lesbar
 - Datumsauswahl zeigt lange Monatsnamen wie „November“ vollständig
 - Menü links beim Start ausgeklappt; Seitentitel „Kundenrechnungen“
 - Auswertung ohne Scrollbalken; schmalere Eingabefelder bei Firmen- und Bankdaten; „Vorname“/„Nachname“ statt „Ansprechpartner …“
