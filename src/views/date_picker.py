@@ -28,8 +28,10 @@ class GermanDatePicker(DatePicker):
         # Room for the longest German month name ("September") plus the padding of the button;
         # the tight width of the library cut off names like "November"
         names = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember")
-        # Measured with the font of the month button: the picker's own font differs and is set later
+        # Measured with the font of the month button: it comes from the style sheet, which is applied
+        # only when the button is polished, so this is done first
         button = self.columns[self.monthIndex] if len(self.columns) > self.monthIndex else self
+        button.ensurePolished()
         metrics = QFontMetrics(button.font())
         widest = max(metrics.boundingRect(name).width() for name in names)
         return max(widest + 56, 130)
