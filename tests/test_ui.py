@@ -241,3 +241,15 @@ def test_settings_fields_and_layout(window, controller, qapp):
     picker = window.cashbook_interface.datePicker
     button = picker.columns[picker.monthIndex]
     assert button.width() >= QFontMetrics(button.font()).boundingRect("September").width() + 40
+
+
+def test_item_table_leaves_the_mouse_to_its_fields(window, qapp):
+    from PySide6.QtWidgets import QAbstractItemView
+    editor = window.invoice_interface.editor
+    editor.add_item_row()
+    table = editor.table
+    # No hover highlight, no own editor and no scrolling under the input fields of a row
+    assert table.editTriggers() == QAbstractItemView.NoEditTriggers
+    assert not table.hasAutoScroll() and table.focusPolicy() == Qt.NoFocus
+    table.entered.emit(table.model().index(0, 0))
+    assert table.delegate.hoverRow == -1
