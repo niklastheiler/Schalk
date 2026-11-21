@@ -2,7 +2,7 @@ import threading
 from datetime import datetime
 import pytest
 from src.controllers.db_controller import DBController, GoBDError
-from src.models.database import DatabaseManager, WrongPasswordError
+from src.models.database import DatabaseManager
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
 from src.utils.einvoice_parser import parse_einvoice_xml, read_einvoice, to_html
@@ -53,14 +53,12 @@ def test_background_save_backup_and_restore(controller, tmp_path):
     c = controller
     c.add_customer(company_name="Gespeichert")
     backup = str(tmp_path / "b.backup")
-    create_backup(c.db.snapshot(), backup, "geheim123", {})
+    create_backup(c.db.snapshot(), backup, {})
     c.close()
     reopened = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
     assert [x.company_name for x in reopened.get_customers()] == ["Gespeichert"]
-    with pytest.raises(WrongPasswordError):
-        restore_backup(reopened.db, backup, "falsch", {})
     reopened.add_customer(company_name="Nach dem Backup")
-    restore_backup(reopened.db, backup, "geheim123", {})
+    restore_backup(reopened.db, backup, {})
     reopened.close()
     restored = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
     assert [x.company_name for x in restored.get_customers()] == ["Gespeichert"]

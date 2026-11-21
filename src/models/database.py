@@ -385,7 +385,7 @@ class DatabaseManager:
         self._writer.close()
         self._closed = True
 
-    # --- Backups (see src/utils/backup.py; portable, protected by a backup password) ---
+    # --- Backups (see src/utils/backup.py; portable single file) ---
     def snapshot(self) -> bytes:
         return self.memory_conn.serialize()
 

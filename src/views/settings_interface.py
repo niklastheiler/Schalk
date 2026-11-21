@@ -5,30 +5,30 @@ import sys
 import threading
 from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
-from PySide6.QtGui import QImageReader, QPixmap
+from PySide6.QtGui import QImageReader, QIntValidator, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SpinBox, SubtitleLabel
+from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SubtitleLabel
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
-from src.models.database import WrongPasswordError
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
 from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, DOCUMENT_COLORS
 from src.utils.signal_bus import SignalBus
 from src.version import APP_AUTHOR, APP_NAME, APP_VERSION
-from src.views.backup_password_dialog import BackupPasswordDialog
 from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
 
 logger = logging.getLogger(__name__)
 
 BACKUP_FILTER = "Schalk-Backup (*.backup)"
 LOGO_PREVIEW_WIDTH, LOGO_PREVIEW_HEIGHT = 240, 72
+# Input fields of the company and bank data: wide enough for names and an IBAN, no full-width bars
+FIELD_WIDTH = 260
 
 FIRM_FIELDS = [
     ("company_name", "Firmenname"),
-    ("first_name", "Ansprechpartner Vorname"),
-    ("last_name", "Ansprechpartner Nachname"),
+    ("first_name", "Vorname"),
+    ("last_name", "Nachname"),
     ("address", "Straße & Hausnummer"),
     ("postal_code", "PLZ"),
     ("city", "Ort"),
@@ -98,6 +98,7 @@ class SettingsInterface(QWidget):
         form.setSpacing(14)
         for key, label in fields:
             edit = LineEdit(tab)
+            edit.setFixedWidth(FIELD_WIDTH)
             form.addRow(BodyLabel(label), edit)
             self.edits[key] = edit
         if extra:
@@ -112,6 +113,7 @@ class SettingsInterface(QWidget):
             self.logoPathEdit = LineEdit(tab)
             self.logoPathEdit.setReadOnly(True)
             self.logoPathEdit.setPlaceholderText("Kein Logo ausgewählt")
+            self.logoPathEdit.setFixedWidth(FIELD_WIDTH)
             choose = PushButton("Auswählen", tab)
             choose.clicked.connect(self.select_logo)
             remove = PushButton("Entfernen", tab)
@@ -119,21 +121,17 @@ class SettingsInterface(QWidget):
             logo.addWidget(self.logoPathEdit)
             logo.addWidget(choose)
             logo.addWidget(remove)
+            logo.addStretch(1)
             form.addRow(BodyLabel("Logo"), logo)
             # The own logo as it will appear on the documents
             self.logoPreview = QLabel(tab)
             self.logoPreview.setFixedHeight(LOGO_PREVIEW_HEIGHT)
             self.logoPreview.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self.logoPathEdit.textChanged.connect(self._show_logo_preview)
-            hint = BodyLabel("Erscheint oben rechts auf Rechnungen, Angeboten und Mahnungen (PNG oder JPG, am besten mit "
-                             "transparentem Hintergrund). Ohne Logo steht dort der Firmenname.", tab)
-            hint.setWordWrap(True)
-            preview = QVBoxLayout()
-            preview.addWidget(self.logoPreview)
-            preview.addWidget(hint)
-            form.addRow(BodyLabel(""), preview)
+            form.addRow(BodyLabel(""), self.logoPreview)
             self._show_logo_preview("")
             self.documentColorCombo = ComboBox(tab)
+            self.documentColorCombo.setFixedWidth(FIELD_WIDTH)
             self.documentColorCombo.addItems(list(DOCUMENT_COLORS))
             self.documentColorCombo.setToolTip("Farbe von Überschrift, Tabellenkopf und Gesamtbetrag in Rechnungen, Angeboten und Mahnungen")
             form.addRow(BodyLabel("Farbe der Dokumente"), self.documentColorCombo)
@@ -143,16 +141,20 @@ class SettingsInterface(QWidget):
 
     def _build_bank_tab(self) -> QWidget:
         def extra(form, tab):
-            self.paymentTermsSpin = SpinBox(tab)
-            self.paymentTermsSpin.setRange(0, 365)
-            form.addRow(BodyLabel("Standard-Zahlungsziel (Tage)"), self.paymentTermsSpin)
+            # A plain field: in the spin box typed digits were appended to the shown value and refused above 365
+            self.paymentTermsEdit = LineEdit(tab)
+            self.paymentTermsEdit.setFixedWidth(FIELD_WIDTH)
+            self.paymentTermsEdit.setValidator(QIntValidator(0, 365, self.paymentTermsEdit))
+            self.paymentTermsEdit.setPlaceholderText(f"{DEFAULT_PAYMENT_TERMS} (0 = sofort)")
+            form.addRow(BodyLabel("Standard-Zahlungsziel (Tage)"), self.paymentTermsEdit)
         return self._form_tab(BANK_FIELDS, extra)
 
     def _add_backup_section(self, layout: QVBoxLayout):
         layout.addWidget(SubtitleLabel("Backup & Wiederherstellung"))
         text = BodyLabel(
-            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine verschlüsselte .backup-Datei oder stelle ein Backup wieder her.\n"
-            "Das Backup wird mit einem Backup-Passwort verschlüsselt und lässt sich damit auf jedem Computer einspielen.\n"
+            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine .backup-Datei oder stelle ein Backup wieder her.\n"
+            "Das Backup lässt sich auf jedem Computer einspielen. Bitte sicher aufbewahren (z. B. USB-Stick im Büro), "
+            "es enthält alle Geschäftsdaten.\n"
             "Wichtig: Der Datenbankschlüssel ist an dieses Windows-Benutzerkonto gebunden. Bei Neuinstallation oder PC-Wechsel "
             "sind die Daten nur über ein Backup wiederherstellbar – bitte regelmäßig sichern.\n"
             "Achtung: Beim Import werden alle bestehenden Daten überschrieben und das Programm startet neu!")
@@ -222,7 +224,7 @@ class SettingsInterface(QWidget):
         self.smallBusinessCheck.setChecked(self.db_controller.is_small_business())
         color = self.db_controller.get_setting("document_color", DEFAULT_DOCUMENT_COLOR)
         self.documentColorCombo.setCurrentText(color if color in DOCUMENT_COLORS else DEFAULT_DOCUMENT_COLOR)
-        self.paymentTermsSpin.setValue(self.db_controller.get_payment_terms())
+        self.paymentTermsEdit.setText(str(self.db_controller.get_payment_terms()))
 
     def _validate(self, values: dict) -> list:
         problems = []
@@ -262,7 +264,7 @@ class SettingsInterface(QWidget):
             "logo_path": logo_path,
             "small_business": "1" if self.smallBusinessCheck.isChecked() else "0",
             "document_color": self.documentColorCombo.currentText(),
-            "payment_terms_days": str(self.paymentTermsSpin.value() if self.paymentTermsSpin.value() is not None else DEFAULT_PAYMENT_TERMS),
+            "payment_terms_days": self.paymentTermsEdit.text().strip() or str(DEFAULT_PAYMENT_TERMS),
         })
         # One save for all values (each save re-encrypts the whole database)
         self.db_controller.set_settings(values)
@@ -312,18 +314,15 @@ class SettingsInterface(QWidget):
                                               BACKUP_FILTER)
         if not path:
             return
-        dialog = BackupPasswordDialog("create", parent=self.window())
-        if not dialog.exec():
-            return
-        # The state of this moment; encrypting and packing all documents runs in the background
-        snapshot, password, folders = self.db_controller.db.snapshot(), dialog.password(), self._backup_folders()
+        # The state of this moment; packing all documents runs in the background
+        snapshot, folders = self.db_controller.db.snapshot(), self._backup_folders()
         self.exportBtn.setEnabled(False)
         self.exportBtn.setText("Backup wird erstellt...")
 
         def run():
             error = ""
             try:
-                create_backup(snapshot, path, password, folders)
+                create_backup(snapshot, path, folders)
             except Exception as e:
                 logger.exception("Backup fehlgeschlagen")
                 error = str(e) or type(e).__name__
@@ -336,6 +335,9 @@ class SettingsInterface(QWidget):
         threading.Thread(target=run, name="schalk-backup").start()
 
     def _on_backup_finished(self, path: str, error: str):
+        if not error:
+            # For the monthly backup reminder at start
+            self.db_controller.set_setting("last_backup", datetime.now().isoformat(timespec="seconds"))
         self.exportBtn.setEnabled(True)
         self.exportBtn.setText("Backup erstellen (Export)")
         if error:
@@ -350,23 +352,15 @@ class SettingsInterface(QWidget):
                                    "Die bisherige Datenbank wird als .bak-Datei aufbewahrt. Das Programm startet danach neu.\n\n"
                                    "Möchtest du fortfahren?"):
             return
-        message = ""
-        while True:
-            dialog = BackupPasswordDialog("unlock", message, parent=self.window())
-            if not dialog.exec():
-                return
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                restore_backup(self.db_controller.db, path, dialog.password(), self._backup_folders())
-                break
-            except WrongPasswordError as e:
-                message = str(e)
-            except Exception as e:
-                logger.exception("Backup-Import fehlgeschlagen")
-                notify_error(self, "Fehler beim Import", str(e))
-                return
-            finally:
-                QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            restore_backup(self.db_controller.db, path, self._backup_folders())
+        except Exception as e:
+            logger.exception("Backup-Import fehlgeschlagen")
+            notify_error(self, "Fehler beim Import", str(e))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
 
         # Restart: the running instance must not write its old state over the restored database
         arguments = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv

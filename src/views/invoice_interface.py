@@ -51,7 +51,7 @@ class InvoiceListPage(ListPage):
             Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
                    on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
         ]
-        super().__init__("Rechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
+        super().__init__("Kundenrechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)
         self.add_header_button("DATEV Export", interface.show_datev_export_dialog)
         self.add_header_button("Neue Rechnung", lambda: interface.show_editor(), primary=True)

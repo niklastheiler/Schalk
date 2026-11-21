@@ -3,10 +3,9 @@ from datetime import datetime
 from PySide6.QtCharts import QCategoryAxis, QChart, QChartView, QLineSeries
 from PySide6.QtCore import QMargins, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import CardWidget, ComboBox, SubtitleLabel
 from src.utils.signal_bus import SignalBus
-from src.views.common import style_scrollbars
 
 MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
 
@@ -25,7 +24,7 @@ class ChartCard(CardWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.addWidget(SubtitleLabel(title, self))
         self.chart = QChart()
         self.chart.setBackgroundVisible(False)
@@ -34,7 +33,8 @@ class ChartCard(CardWidget):
         self.chartView = QChartView(self.chart, self)
         self.chartView.setRenderHint(QPainter.Antialiasing)
         self.chartView.setStyleSheet("background: transparent;")
-        self.chartView.setMinimumHeight(380)
+        # Both charts share the height of the page, so everything fits without scrolling
+        self.chartView.setMinimumHeight(160)
         layout.addWidget(self.chartView)
 
     def setup_chart(self, series_data: dict, colors: dict):
@@ -87,17 +87,9 @@ class AnalysisInterface(QWidget):
         for signal in (bus.invoicesChanged, bus.cashbookChanged, bus.incomingInvoicesChanged):
             signal.connect(self._mark_dirty)
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        style_scrollbars(scroll)
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(36, 36, 36, 36)
-        layout.setSpacing(24)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
 
         header = QHBoxLayout()
         header.addWidget(SubtitleLabel("Auswertung", self))
@@ -110,10 +102,8 @@ class AnalysisInterface(QWidget):
 
         self.invoiceCard = ChartCard("Rechnungsübersicht (brutto)", self)
         self.cashbookCard = ChartCard("Kassenbestand (Monatsende)", self)
-        layout.addWidget(self.invoiceCard)
-        layout.addWidget(self.cashbookCard)
-        scroll.setWidget(content)
-        main_layout.addWidget(scroll)
+        layout.addWidget(self.invoiceCard, 1)
+        layout.addWidget(self.cashbookCard, 1)
 
     def _mark_dirty(self):
         self._dirty = True

@@ -4,7 +4,7 @@ import os
 import sys
 import threading
 from datetime import datetime
-from PySide6.QtCore import QLockFile, Qt
+from PySide6.QtCore import QLockFile, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 from src.controllers.db_controller import DBController
@@ -113,6 +113,7 @@ def main():
     window.showMaximized()
     window.check_integrity_on_startup()
     window.updates.start()
+    QTimer.singleShot(500, window, window.remind_of_backup)
     threading.Thread(target=_warm_up, name="schalk-warm-up", daemon=True).start()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 

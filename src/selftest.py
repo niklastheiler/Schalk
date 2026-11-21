@@ -47,7 +47,7 @@ def _check(controller):
     export_xrechnung(controller, invoice, target)
     if read_einvoice(target).number != invoice.invoice_number:
         raise AssertionError("XRechnung kann nicht wieder gelesen werden")
-    create_backup(controller.db.snapshot(), os.path.join(paths.DATA_DIR, "test.backup"), "selbsttest", {"app_data": paths.APP_DATA_DIR})
+    create_backup(controller.db.snapshot(), os.path.join(paths.DATA_DIR, "test.backup"), {"app_data": paths.APP_DATA_DIR})
     problems = controller.verify_integrity(check_files=True)
     if problems:
         raise AssertionError("Integritätsprüfung: " + "; ".join(problems))
