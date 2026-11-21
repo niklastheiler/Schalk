@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3
+
+- Neues Design für Rechnungen, Angebote und Mahnungen nach DIN 5008 (passt in Fensterumschläge), mit eigenem Logo, wählbarer Farbe, Fußzeile mit Bank- und Steuerdaten und Seitenzahlen
+- Leistungszeitraum (von – bis) statt eines einzelnen Leistungsdatums, auch in der E-Rechnung
+- Backup auf einem anderen PC oder Windows-Benutzer: archivierte Rechnungen, Belege und Logo werden wieder gefunden; beschädigte Backups werden von falschen Passwörtern unterschieden; Backup läuft im Hintergrund
+- Preiseingabe: „1.500“ ergibt jetzt 1.500 € (bisher 1,50 €)
+- PDFs zeigen polnische, tschechische und ungarische Buchstaben korrekt
+- Kassenbuch: Bestand darf an keinem Tag negativ werden, auch nicht durch rückdatierte Buchungen
+- Keine falschen GoBD-Warnungen mehr nach Zeitumstellung oder Uhrkorrektur
+- Drucken mit Edge als PDF-Programm und fehlende Programme führen nicht mehr zu Fehlerdialogen
+- Doppelt hochgeladene Eingangsrechnungen werden erkannt; USt-IdNr. und E-Mail von Kunden werden geprüft
+- Startet die Datenbank nicht, kann Schalk leer starten, um ein Backup einzuspielen
+- Erstes Festschreiben ohne Wartezeit; weitere Einheiten (Woche, Jahr, kWh u. a.) in der E-Rechnung
+
 ## 1.2.3
 
 - Button „Nach Update suchen“ unter Einstellungen → Sicherheit & GoBD, zeigt das Ergebnis der Prüfung an
