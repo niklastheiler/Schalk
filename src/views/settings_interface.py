@@ -5,14 +5,16 @@ import sys
 import threading
 from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
-from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CheckBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SpinBox, SubtitleLabel
+from PySide6.QtGui import QImageReader, QPixmap
+from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SpinBox, SubtitleLabel
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
 from src.models.database import WrongPasswordError
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
+from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, DOCUMENT_COLORS
 from src.utils.signal_bus import SignalBus
 from src.version import APP_AUTHOR, APP_NAME, APP_VERSION
 from src.views.backup_password_dialog import BackupPasswordDialog
@@ -21,6 +23,7 @@ from src.views.common import confirm, make_scrollable, notify_error, notify_succ
 logger = logging.getLogger(__name__)
 
 BACKUP_FILTER = "Schalk-Backup (*.backup)"
+LOGO_PREVIEW_WIDTH, LOGO_PREVIEW_HEIGHT = 240, 72
 
 FIRM_FIELDS = [
     ("company_name", "Firmenname"),
@@ -117,6 +120,23 @@ class SettingsInterface(QWidget):
             logo.addWidget(choose)
             logo.addWidget(remove)
             form.addRow(BodyLabel("Logo"), logo)
+            # The own logo as it will appear on the documents
+            self.logoPreview = QLabel(tab)
+            self.logoPreview.setFixedHeight(LOGO_PREVIEW_HEIGHT)
+            self.logoPreview.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.logoPathEdit.textChanged.connect(self._show_logo_preview)
+            hint = BodyLabel("Erscheint oben rechts auf Rechnungen, Angeboten und Mahnungen (PNG oder JPG, am besten mit "
+                             "transparentem Hintergrund). Ohne Logo steht dort der Firmenname.", tab)
+            hint.setWordWrap(True)
+            preview = QVBoxLayout()
+            preview.addWidget(self.logoPreview)
+            preview.addWidget(hint)
+            form.addRow(BodyLabel(""), preview)
+            self._show_logo_preview("")
+            self.documentColorCombo = ComboBox(tab)
+            self.documentColorCombo.addItems(list(DOCUMENT_COLORS))
+            self.documentColorCombo.setToolTip("Farbe von Überschrift, Tabellenkopf und Gesamtbetrag in Rechnungen, Angeboten und Mahnungen")
+            form.addRow(BodyLabel("Farbe der Dokumente"), self.documentColorCombo)
             self.smallBusinessCheck = CheckBox("Kleinunternehmer gemäß § 19 UStG (keine Umsatzsteuer, neue Positionen mit 0 %)", tab)
             form.addRow(BodyLabel("Besteuerung"), self.smallBusinessCheck)
         return self._form_tab(FIRM_FIELDS, extra)
@@ -200,6 +220,8 @@ class SettingsInterface(QWidget):
             edit.setText(self.db_controller.get_setting(key))
         self.logoPathEdit.setText(paths.resolve(self.db_controller.get_setting("logo_path")))
         self.smallBusinessCheck.setChecked(self.db_controller.is_small_business())
+        color = self.db_controller.get_setting("document_color", DEFAULT_DOCUMENT_COLOR)
+        self.documentColorCombo.setCurrentText(color if color in DOCUMENT_COLORS else DEFAULT_DOCUMENT_COLOR)
         self.paymentTermsSpin.setValue(self.db_controller.get_payment_terms())
 
     def _validate(self, values: dict) -> list:
@@ -224,16 +246,22 @@ class SettingsInterface(QWidget):
         logo_path = self.logoPathEdit.text()
         in_assets = os.path.normcase(os.path.abspath(logo_path)).startswith(os.path.normcase(os.path.abspath(paths.ASSETS_DIR)) + os.sep)
         if logo_path and os.path.isfile(logo_path) and not in_assets:
-            # Copy into the data folder so the logo stays available
+            # Copied into the data folder, so the logo stays available (and is part of backups). A new name each
+            # time: a logo restored from a backup is read-only and must not be overwritten.
             os.makedirs(paths.ASSETS_DIR, exist_ok=True)
-            new_path = os.path.join(paths.ASSETS_DIR, f"logo{os.path.splitext(logo_path)[1].lower()}")
-            shutil.copyfile(logo_path, new_path)
+            new_path = os.path.join(paths.ASSETS_DIR, f"logo_{datetime.now():%Y%m%d%H%M%S}{os.path.splitext(logo_path)[1].lower()}")
+            try:
+                shutil.copyfile(logo_path, new_path)
+            except OSError as e:
+                notify_error(self, "Logo nicht übernommen", str(e))
+                return
             logo_path = new_path
             self.logoPathEdit.setText(logo_path)
 
         values.update({
             "logo_path": logo_path,
             "small_business": "1" if self.smallBusinessCheck.isChecked() else "0",
+            "document_color": self.documentColorCombo.currentText(),
             "payment_terms_days": str(self.paymentTermsSpin.value() if self.paymentTermsSpin.value() is not None else DEFAULT_PAYMENT_TERMS),
         })
         # One save for all values (each save re-encrypts the whole database)
@@ -241,9 +269,20 @@ class SettingsInterface(QWidget):
         notify_success(self, "Gespeichert", "Die Einstellungen wurden gespeichert.")
 
     def select_logo(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Logo auswählen", "", "Bilder (*.png *.jpg *.jpeg)")
-        if path:
-            self.logoPathEdit.setText(path)
+        path, _ = QFileDialog.getOpenFileName(self, "Logo auswählen", paths.downloads_dir(), "Bilder (*.png *.jpg *.jpeg)")
+        if not path:
+            return
+        if QImageReader(path).read().isNull():
+            notify_error(self, "Kein Bild", f"{os.path.basename(path)} lässt sich nicht als Bild öffnen.")
+            return
+        self.logoPathEdit.setText(path)
+        notify_success(self, "Logo ausgewählt", "Wird mit „Einstellungen speichern“ übernommen.")
+
+    def _show_logo_preview(self, path: str):
+        pixmap = QPixmap(path) if path and os.path.isfile(path) else QPixmap()
+        self.logoPreview.setVisible(not pixmap.isNull())
+        if not pixmap.isNull():
+            self.logoPreview.setPixmap(pixmap.scaled(LOGO_PREVIEW_WIDTH, LOGO_PREVIEW_HEIGHT, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     # --- Integrity ---
     def check_integrity(self):

@@ -67,6 +67,8 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 
 Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. Das ist Pflicht für Behörden, die Leitweg-ID wird im Kundenstamm als Käuferreferenz eingetragen.
 
+**Gestaltung.** Rechnungen, Angebote und Mahnungen sind nach DIN 5008 aufgebaut: Die Anschrift passt ins Fenster eines DL- oder C5/6-Umschlags, rechts daneben stehen Nummer, Datum, Kundennummer und Ansprechpartner, Falz- und Lochmarken sind eingezeichnet. Jede Seite hat eine Fußzeile mit Firmen-, Kontakt-, Bank- und Steuerdaten und „Seite x von y“. Logo und Farbe der Dokumente werden unter Einstellungen > Firmendaten gewählt. Entwürfe tragen das Wasserzeichen „ENTWURF“.
+
 **Eingang.** Unter Lieferanten- bzw. Sonstige Rechnungen werden XRechnung (CII und UBL) und ZUGFeRD-PDFs eingelesen. Betrag, Datum, Lieferant und Rechnungsnummer werden übernommen und die Rechnung lesbar angezeigt. Die Originaldatei wird unverändert archiviert.
 
 **Steuerfälle.** Pro Position sind 19 %, 7 % oder 0 % möglich. Bei 0 % ist ein Befreiungsgrund Pflicht, z. B. § 19 UStG, § 13b (Reverse Charge), § 4 Nr. 1b oder § 4 Nr. 1a. Für Kleinunternehmer gibt es eine eigene Einstellung.
@@ -105,4 +107,4 @@ Niklas Theiler. Die Version steht in `src/version.py` und unter Einstellungen �
 
 Der Quellcode von Schalk steht unter der [MIT-Lizenz](LICENSE).
 
-Verwendete Bibliotheken haben eigene Lizenzen. Wichtig für die fertige EXE: [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) steht unter der GPLv3, deshalb gelten für die gebündelte Programmdatei auch deren Bedingungen. PySide6/Qt steht unter der LGPLv3, Saxon-HE unter der MPL 2.0, das Raketen-Symbol stammt aus [Lucide](https://lucide.dev) (ISC). Die PDF-Schrift [DejaVu Sans](https://dejavu-fonts.github.io) steht unter der Bitstream-Vera-Lizenz (`src/resources/fonts/LICENSE.txt`).
+Verwendete Bibliotheken haben eigene Lizenzen. Wichtig für die fertige EXE: [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) steht unter der GPLv3, deshalb gelten für die gebündelte Programmdatei auch deren Bedingungen. PySide6/Qt steht unter der LGPLv3, Saxon-HE unter der MPL 2.0, das Raketen-Symbol stammt aus [Lucide](https://lucide.dev) (ISC). Die PDF-Schrift [Inter](https://rsms.me/inter/) steht unter der SIL Open Font License 1.1 (`src/resources/fonts/LICENSE.txt`).
