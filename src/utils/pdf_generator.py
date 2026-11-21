@@ -28,7 +28,7 @@ from src.controllers.db_controller import DBController
 from src.models.database import Invoice
 from src.utils import paths
 from src.utils.calculations import tax_breakdown
-from src.utils.tax import format_rate
+from src.utils.tax import RETENTION_NOTICE, format_rate
 from src.utils.text import fmt_money, fmt_number, fmt_price, payment_terms_text
 
 FONT = "Inter"
@@ -128,6 +128,13 @@ def _markup(text) -> str:
 
 def _date(value) -> str:
     return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _period(start, end) -> str:
+    """Leistungszeitraum: 01.10.–31.10.2026, across a year 15.12.2026–15.01.2027"""
+    if start.year == end.year:
+        return f"{start:%d.%m.}–{_date(end)}"
+    return f"{_date(start)}–{_date(end)}"
 
 
 def _iban(iban: str) -> str:
@@ -451,8 +458,11 @@ class PDFGenerator:
         number = "" if draft else invoice.invoice_number
         title = "Rechnungsentwurf" if draft else "Stornorechnung" if storno else "Rechnung"
 
-        info = [("Rechnungsnr.", number or "Entwurf"), ("Rechnungsdatum", _date(invoice.invoice_date)),
-                ("Leistungsdatum", _date(invoice.delivery_date))]
+        info = [("Rechnungsnr.", number or "Entwurf"), ("Rechnungsdatum", _date(invoice.invoice_date))]
+        if invoice.delivery_end_date:
+            info.append(("Leistungszeitraum", _period(invoice.delivery_date, invoice.delivery_end_date)))
+        else:
+            info.append(("Leistungsdatum", _date(invoice.delivery_date)))
         if original:
             info += [("Storno zu", original.invoice_number), ("Rechnung vom", _date(original.invoice_date))]
         elif not storno:
@@ -475,6 +485,8 @@ class PDFGenerator:
                      Spacer(1, 7 * mm)]
         if invoice.tax_exemption_reason:
             elements += [self._note(f"Hinweis: {invoice.tax_exemption_reason}"), Spacer(1, 5 * mm)]
+        if invoice.retention_notice:
+            elements += [self._note(f"Hinweis zur Aufbewahrung: {RETENTION_NOTICE}"), Spacer(1, 5 * mm)]
         if storno:
             elements += self._closing(seller, "Mit dieser Stornorechnung wird die oben genannte Rechnung vollständig "
                                               "aufgehoben. Bereits gezahlte Beträge werden verrechnet bzw. erstattet.")

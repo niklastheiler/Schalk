@@ -606,6 +606,8 @@ class DBController:
             problems.append("Die Rechnung hat keine Positionen.")
         if not invoice.delivery_date:
             problems.append("Leistungsdatum fehlt.")
+        elif invoice.delivery_end_date and _naive(invoice.delivery_end_date) < _naive(invoice.delivery_date):
+            problems.append("Das Ende des Leistungszeitraums liegt vor seinem Beginn.")
         if has_zero_rate(items) and not invoice.tax_exemption_reason:
             problems.append(EXEMPTION_REQUIRED_MESSAGE)
         categories = {vat_category(i.tax_percent, invoice.tax_exemption_reason) for i in items}
@@ -646,6 +648,11 @@ class DBController:
             "tax_exemption_reason": invoice.tax_exemption_reason,
             "cancels": invoice.cancels_invoice_id,
         }
+        # Added in version 1.3; only present when used, so the hashes of older invoices stay valid
+        if invoice.delivery_end_date:
+            payload["delivery_end_date"] = _iso(invoice.delivery_end_date)
+        if invoice.retention_notice:
+            payload["retention_notice"] = True
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     def _last_invoice_hash(self, session: Session, exclude_id: int) -> str:
@@ -701,6 +708,15 @@ class DBController:
             raise ValueError("Die Gutschrift / der Nachlass darf nicht negativ sein.")
         return credit_amount
 
+    @staticmethod
+    def _delivery_end(start: datetime, end: Optional[datetime]) -> Optional[datetime]:
+        """End of the Leistungszeitraum; None for a single day of delivery."""
+        if not end or _naive(end).date() == _naive(start).date():
+            return None
+        if _naive(end) < _naive(start):
+            raise ValueError("Das Ende des Leistungszeitraums liegt vor seinem Beginn.")
+        return end
+
     def create_invoice(self, customer_id: int, invoice_date: datetime, delivery_date: datetime, items: list, user: str = None, **kwargs) -> int:
         items = self._normalize_items(items)
         credit_amount = self._credit(kwargs)
@@ -715,6 +731,8 @@ class DBController:
                 customer_id=customer_id,
                 invoice_date=invoice_date,
                 delivery_date=delivery_date,
+                delivery_end_date=self._delivery_end(delivery_date, kwargs.get("delivery_end_date")),
+                retention_notice=bool(kwargs.get("retention_notice")),
                 net_amount=totals["net_amount"],
                 tax_amount=totals["tax_amount"],
                 gross_amount=totals["gross_amount"],
@@ -767,6 +785,8 @@ class DBController:
             invoice.tax_exemption_reason = exemption_reason
             invoice.invoice_date = invoice_date
             invoice.delivery_date = delivery_date
+            invoice.delivery_end_date = self._delivery_end(delivery_date, kwargs.get("delivery_end_date"))
+            invoice.retention_notice = bool(kwargs.get("retention_notice"))
             invoice.net_amount = totals["net_amount"]
             invoice.tax_amount = totals["tax_amount"]
             invoice.gross_amount = totals["gross_amount"]
@@ -840,6 +860,8 @@ class DBController:
                 customer_id=original.customer_id,
                 invoice_date=datetime.combine(datetime.now().date(), datetime.min.time()),
                 delivery_date=original.delivery_date,
+                delivery_end_date=original.delivery_end_date,
+                retention_notice=original.retention_notice,
                 net_amount=0.0 - original.net_amount,
                 tax_amount=0.0 - original.tax_amount,
                 gross_amount=0.0 - original.gross_amount,

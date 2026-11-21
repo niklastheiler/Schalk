@@ -105,6 +105,16 @@ def units_and_rounding(c):
     ])
 
 
+def service_period_private(c):
+    """Leistungszeitraum and the retention notice for work on a private customer's property (§ 14 Abs. 4 Nr. 9 UStG)."""
+    customer_id = c.add_customer(first_name="Erika", last_name="Mustermann", address="Gartenweg 3", postal_code="20095",
+                                 city="Hamburg", email="erika@example.de")
+    return c.create_invoice(customer_id, DAY, DAY, [
+        {"title": "Dachreparatur", "quantity": 16, "unit": "Stunden", "unit_price": 58.0, "tax_percent": 19.0},
+        {"title": "Material", "quantity": 1, "unit": "Pauschale", "unit_price": 420.0, "tax_percent": 19.0},
+    ], status="Offen", delivery_end_date=datetime(2026, 10, 14, tzinfo=timezone.utc), retention_notice=True)
+
+
 CASES = {
     "Standard_19_7_Rabatt_Gutschrift": standard,
     "Behoerde_Leitweg-ID": authority,
@@ -117,4 +127,5 @@ CASES = {
     "Sonderzeichen_lange_Texte": special_characters,
     "Viele_Positionen_gemischt": many_items,
     "Einheiten_und_Rundung": units_and_rounding,
+    "Leistungszeitraum_Privatkunde": service_period_private,
 }

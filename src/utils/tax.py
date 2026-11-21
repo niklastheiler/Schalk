@@ -9,6 +9,10 @@ EXEMPTION_REASON_PRESETS = [
     "Steuerfreie Leistung gemäß § 4 UStG",
 ]
 
+# § 14 Abs. 4 Nr. 9 UStG: work in connection with a property (e.g. construction, repair, garden) for a private person
+RETENTION_NOTICE = ("Sie sind gesetzlich verpflichtet, diese Rechnung zwei Jahre lang aufzubewahren (§ 14b Abs. 1 Satz 5 UStG). "
+                    "Die Frist beginnt mit dem Schluss des Kalenderjahres, in dem die Rechnung ausgestellt wurde.")
+
 EXEMPTION_REQUIRED_MESSAGE = "Für Positionen mit 0 % MwSt. muss ein Befreiungsgrund angegeben werden."
 
 
