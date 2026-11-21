@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFormLayout
-from qfluentwidgets import CheckBox, LineEdit
+from qfluentwidgets import BodyLabel, CheckBox, LineEdit
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import DocumentEditor, _german_number, _parse_number, _number_validator
 
@@ -23,7 +23,15 @@ class InvoiceEditor(DocumentEditor):
         self.invoiceDate = GermanDatePicker()
         form.addRow("Rechnungsdatum", self.invoiceDate)
         self.deliveryDate = GermanDatePicker()
-        form.addRow("Leistungsdatum", self.deliveryDate)
+        self.deliveryLabel = BodyLabel("Leistungsdatum")
+        form.addRow(self.deliveryLabel, self.deliveryDate)
+        # Leistungszeitraum for services over a longer time (maintenance, rent, projects)
+        self.periodCheck = CheckBox("Leistungszeitraum (von – bis)")
+        self.periodCheck.stateChanged.connect(self._on_period_toggled)
+        form.addRow("", self.periodCheck)
+        self.deliveryEndDate = GermanDatePicker()
+        self.deliveryEndLabel = BodyLabel("Leistung bis")
+        form.addRow(self.deliveryEndLabel, self.deliveryEndDate)
         self.creditCheck = CheckBox("Gutschrift / Nachlass")
         self.creditCheck.stateChanged.connect(self._on_credit_toggled)
         form.addRow("", self.creditCheck)
@@ -36,6 +44,13 @@ class InvoiceEditor(DocumentEditor):
         form.addRow("", self.creditAmountEdit)
         form.addRow("", self.creditDescEdit)
         self._on_credit_toggled()
+        self._on_period_toggled()
+
+    def _on_period_toggled(self, state=None):
+        period = self.periodCheck.isChecked()
+        self.deliveryLabel.setText("Leistung von" if period else "Leistungsdatum")
+        self.deliveryEndLabel.setVisible(period)
+        self.deliveryEndDate.setVisible(period)
 
     def _on_credit_toggled(self, state=None):
         visible = self.creditCheck.isChecked()
@@ -49,10 +64,13 @@ class InvoiceEditor(DocumentEditor):
     def clear_document_fields(self):
         self.invoiceDate.setDate(QDate.currentDate())
         self.deliveryDate.setDate(QDate.currentDate())
+        self.deliveryEndDate.setDate(QDate.currentDate())
+        self.periodCheck.setChecked(False)
         self.creditCheck.setChecked(False)
 
     def set_document_fields_enabled(self, enabled: bool):
-        for widget in (self.invoiceDate, self.deliveryDate, self.creditCheck, self.creditAmountEdit, self.creditDescEdit):
+        for widget in (self.invoiceDate, self.deliveryDate, self.periodCheck, self.deliveryEndDate,
+                       self.creditCheck, self.creditAmountEdit, self.creditDescEdit):
             widget.setEnabled(enabled)
 
     def credit_amount(self) -> float:
@@ -68,6 +86,9 @@ class InvoiceEditor(DocumentEditor):
         self.current_id = invoice_id
         self.invoiceDate.setDate(_qdate(invoice.invoice_date))
         self.deliveryDate.setDate(_qdate(invoice.delivery_date))
+        if invoice.delivery_end_date:
+            self.periodCheck.setChecked(True)
+            self.deliveryEndDate.setDate(_qdate(invoice.delivery_end_date))
         if (invoice.credit_amount or 0) > 0:
             self.creditCheck.setChecked(True)
             self.creditAmountEdit.setText(_german_number(invoice.credit_amount))
@@ -95,6 +116,7 @@ class InvoiceEditor(DocumentEditor):
             customer_id=customer_id,
             invoice_date=_to_datetime(self.invoiceDate),
             delivery_date=_to_datetime(self.deliveryDate),
+            delivery_end_date=_to_datetime(self.deliveryEndDate) if self.periodCheck.isChecked() else None,
             items=items,
             credit_amount=credit,
             credit_desc=self.creditDescEdit.text().strip() if credit > 0 else "",

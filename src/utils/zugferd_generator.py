@@ -128,8 +128,12 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         reg.id = ("VA", buyer["vat_id"])
         party.tax_registrations.add(reg)
 
-    # --- Delivery date (BT-72) ---
-    doc.trade.delivery.event.occurrence = _date(invoice.delivery_date)
+    # --- Date (BT-72) or period (BG-14) of delivery ---
+    if invoice.delivery_end_date:
+        doc.trade.settlement.period.start = _date(invoice.delivery_date)
+        doc.trade.settlement.period.end = _date(invoice.delivery_end_date)
+    else:
+        doc.trade.delivery.event.occurrence = _date(invoice.delivery_date)
     # Intra-community supply: the country the goods were delivered to is mandatory (BR-IC-12);
     # the delivery address is the buyer's address
     if any(vat_category(i.tax_percent, reason) == "K" for i in invoice.items):

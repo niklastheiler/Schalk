@@ -130,6 +130,13 @@ def _date(value) -> str:
     return value.strftime("%d.%m.%Y") if value else ""
 
 
+def _period(start, end) -> str:
+    """Leistungszeitraum: 01.10.–31.10.2026, across a year 15.12.2026–15.01.2027"""
+    if start.year == end.year:
+        return f"{start:%d.%m.}–{_date(end)}"
+    return f"{_date(start)}–{_date(end)}"
+
+
 def _iban(iban: str) -> str:
     compact = (iban or "").replace(" ", "")
     return " ".join(compact[i:i + 4] for i in range(0, len(compact), 4))
@@ -451,8 +458,11 @@ class PDFGenerator:
         number = "" if draft else invoice.invoice_number
         title = "Rechnungsentwurf" if draft else "Stornorechnung" if storno else "Rechnung"
 
-        info = [("Rechnungsnr.", number or "Entwurf"), ("Rechnungsdatum", _date(invoice.invoice_date)),
-                ("Leistungsdatum", _date(invoice.delivery_date))]
+        info = [("Rechnungsnr.", number or "Entwurf"), ("Rechnungsdatum", _date(invoice.invoice_date))]
+        if invoice.delivery_end_date:
+            info.append(("Leistungszeitraum", _period(invoice.delivery_date, invoice.delivery_end_date)))
+        else:
+            info.append(("Leistungsdatum", _date(invoice.delivery_date)))
         if original:
             info += [("Storno zu", original.invoice_number), ("Rechnung vom", _date(original.invoice_date))]
         elif not storno:

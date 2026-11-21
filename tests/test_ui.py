@@ -173,3 +173,26 @@ def test_backup_is_created_in_the_background(window, controller, qapp, data_dir)
         time.sleep(0.02)
     target = next(data_dir.glob("Schalk_Backup_*.backup"), None)
     assert si.exportBtn.isEnabled() and target is not None and target.stat().st_size > 0
+
+
+def test_invoice_editor_service_period(window, controller, qapp):
+    from PySide6.QtCore import QDate
+    ii = window.invoice_interface
+    window.switchTo(ii)
+    ii.show_editor()
+    ed = ii.editor
+    assert not ed.deliveryEndDate.isVisibleTo(ed)
+    ed.companyEdit.setText("Privat")
+    ed.add_item_row()
+    ed.table.cellWidget(0, 0).setText("Gartenpflege")
+    ed.table.cellWidget(0, 3).setText("100,00")
+    ed.deliveryDate.setDate(QDate(2026, 10, 1))
+    ed.periodCheck.setChecked(True)
+    assert ed.deliveryEndDate.isVisibleTo(ed) and ed.deliveryLabel.text() == "Leistung von"
+    ed.deliveryEndDate.setDate(QDate(2026, 10, 31))
+    ed.save()
+    qapp.processEvents()
+    invoice = controller.get_invoice(controller.get_invoices()[0].id)
+    assert invoice.delivery_end_date.day == 31
+    ii.show_editor(invoice.id)
+    assert ed.periodCheck.isChecked()

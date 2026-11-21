@@ -269,3 +269,40 @@ def test_long_invoices_continue_on_further_pages(controller, seller):
     assert len(reader.pages) > 2
     last = " ".join(reader.pages[-1].extract_text().split())
     assert f"Seite {len(reader.pages)} von {len(reader.pages)}" in last and "Mit freundlichen Grüßen" in last
+
+
+def test_service_period(controller, seller):
+    from einvoice_cases import CASES
+    from src.models.database import Invoice
+    from src.utils.zugferd_generator import build_cii_xml
+    from src.utils.einvoice_validation import validate_xrechnung
+    c = controller
+    invoice = c.get_invoice(CASES["Leistungszeitraum"](c))
+    text = _pdf_text(invoice.pdf_path)
+    assert "Leistungszeitraum 01.10.–14.10.2026" in text and "Leistungsdatum" not in text
+    xml = get_facturx_xml_from_pdf(open(invoice.pdf_path, "rb").read())[1]
+    assert b"BillingSpecifiedPeriod" in xml and b"20261014" in xml
+    assert validate_en16931(xml) == []
+    assert validate_xrechnung(build_cii_xml(invoice, c, "xrechnung")) == []
+    # The period is sealed in the hash chain
+    assert c.verify_integrity() == []
+    with c.get_session() as session:
+        session.query(Invoice).filter(Invoice.id == invoice.id).update({"delivery_end_date": None})
+        session.commit()
+    assert any("verändert" in p for p in c.verify_integrity())
+
+
+def test_service_period_must_not_end_before_it_starts(controller):
+    with pytest.raises(ValueError, match="vor seinem Beginn"):
+        controller.create_invoice(_customer(controller), DAY, DAY, ITEMS, delivery_end_date=DAY - timedelta(days=1))
+    # The same day is a single date of delivery, not a period
+    invoice_id = controller.create_invoice(_customer(controller), DAY, DAY, ITEMS, delivery_end_date=DAY)
+    assert controller.get_invoice(invoice_id).delivery_end_date is None
+
+
+def test_hash_of_invoices_without_the_new_fields_is_unchanged(controller, seller):
+    # Invoices sealed before version 1.3 must still verify: their payload has no keys for the new fields
+    c = controller
+    invoice = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen"))
+    payload = c._invoice_hash_payload(invoice, invoice.items)
+    assert "delivery_end_date" not in payload

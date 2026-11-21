@@ -52,6 +52,8 @@ class Invoice(Base):
     customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
     invoice_date = Column(DateTime, nullable=False)
     delivery_date = Column(DateTime, nullable=False)
+    # Leistungszeitraum: delivery_date is its start, this its end (None = a single day of delivery)
+    delivery_end_date = Column(DateTime)
     status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Teilbezahlt, Bezahlt, Überfällig, Storniert
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)

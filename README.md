@@ -69,6 +69,8 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 
 **Gestaltung.** Rechnungen, Angebote und Mahnungen sind nach DIN 5008 aufgebaut: Die Anschrift passt ins Fenster eines DL- oder C5/6-Umschlags, rechts daneben stehen Nummer, Datum, Kundennummer und Ansprechpartner, Falz- und Lochmarken sind eingezeichnet. Jede Seite hat eine Fußzeile mit Firmen-, Kontakt-, Bank- und Steuerdaten und „Seite x von y“. Logo und Farbe der Dokumente werden unter Einstellungen > Firmendaten gewählt. Entwürfe tragen das Wasserzeichen „ENTWURF“.
 
+**Leistungsdatum.** Statt eines einzelnen Leistungsdatums lässt sich ein Leistungszeitraum angeben (z. B. bei Wartung, Miete oder Projekten). Er erscheint auf der Rechnung und in der E-Rechnung (Abrechnungszeitraum, BG-14).
+
 **Eingang.** Unter Lieferanten- bzw. Sonstige Rechnungen werden XRechnung (CII und UBL) und ZUGFeRD-PDFs eingelesen. Betrag, Datum, Lieferant und Rechnungsnummer werden übernommen und die Rechnung lesbar angezeigt. Die Originaldatei wird unverändert archiviert.
 
 **Steuerfälle.** Pro Position sind 19 %, 7 % oder 0 % möglich. Bei 0 % ist ein Befreiungsgrund Pflicht, z. B. § 19 UStG, § 13b (Reverse Charge), § 4 Nr. 1b oder § 4 Nr. 1a. Für Kleinunternehmer gibt es eine eigene Einstellung.
