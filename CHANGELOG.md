@@ -5,6 +5,7 @@
 - Backup ohne Passwort: eine einzelne Datei, die sich auf jedem PC einspielen lässt; beschädigte oder unvollständige Dateien werden erkannt. Backups aus 1.3 und älter (mit Passwort) lassen sich nicht mehr einspielen, deshalb nach dem Update gleich ein neues Backup erstellen
 - Monatliche Backup-Erinnerung beim Start: „Später“ oder „Backup jetzt erstellen“
 - Standard-Zahlungsziel lässt sich wieder eintragen (leer = 14 Tage)
+- Positionen: Eingabefelder springen beim Überfahren mit der Maus nicht mehr herum
 - Datumsauswahl zeigt lange Monatsnamen wie „November“ vollständig
 - Menü links beim Start ausgeklappt; Seitentitel „Kundenrechnungen“
 - Auswertung ohne Scrollbalken; schmalere Eingabefelder bei Firmen- und Bankdaten; „Vorname“/„Nachname“ statt „Ansprechpartner …“
