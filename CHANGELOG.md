@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1
+
+- Backup ohne Passwort: eine einzelne Datei, die sich auf jedem PC einspielen lässt; beschädigte oder unvollständige Dateien werden erkannt. Backups aus 1.3 und älter (mit Passwort) lassen sich nicht mehr einspielen, deshalb nach dem Update gleich ein neues Backup erstellen
+- Monatliche Backup-Erinnerung beim Start: „Später“ oder „Backup jetzt erstellen“
+- Standard-Zahlungsziel lässt sich wieder eintragen (leer = 14 Tage)
+- Datumsauswahl zeigt lange Monatsnamen wie „November“ vollständig
+- Menü links beim Start ausgeklappt; Seitentitel „Kundenrechnungen“
+- Auswertung ohne Scrollbalken; schmalere Eingabefelder bei Firmen- und Bankdaten; „Vorname“/„Nachname“ statt „Ansprechpartner …“
+
 ## 1.3
 
 - Neues Design für Rechnungen, Angebote und Mahnungen nach DIN 5008 (passt in Fensterumschläge), mit eigenem Logo, wählbarer Farbe, Fußzeile mit Bank- und Steuerdaten und Seitenzahlen
