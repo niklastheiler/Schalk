@@ -222,7 +222,7 @@ def test_immediate_payment_terms(controller, seller):
     c = controller
     c.set_settings({"payment_terms_days": "0"})
     invoice = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen"))
-    assert "Betrag sofort ohne Abzug unter Angabe" in _pdf_text(invoice.pdf_path)
+    assert "sofort ohne Abzug unter Angabe der Rechnungsnummer" in _pdf_text(invoice.pdf_path)
     xml = get_facturx_xml_from_pdf(open(invoice.pdf_path, "rb").read())[1]
     assert "Zahlbar sofort ohne Abzug.".encode() in xml and validate_en16931(xml) == []
 
@@ -235,3 +235,37 @@ def test_pdf_font_covers_european_names():
     for name in (FONT, FONT_BOLD):
         cmap = pdfmetrics.getFont(name).face.charToGlyph
         assert [ch for ch in letters if ord(ch) not in cmap] == []
+
+
+def test_document_layout_with_own_logo(controller, seller, tmp_path):
+    # Own logo with a transparent background, colour of the documents chosen in the settings
+    from PIL import Image
+    c = controller
+    logo = tmp_path / "logo.png"
+    Image.new("RGBA", (400, 120), (200, 30, 30, 128)).save(logo)
+    c.set_settings({"logo_path": str(logo), "document_color": "Petrol"})
+    invoice = c.get_invoice(c.create_invoice(_customer(c, country="AT", vat_id="ATU13585627"), DAY, DAY, ITEMS, status="Offen"))
+    reader = PdfReader(invoice.pdf_path)
+    page = reader.pages[0]
+    assert any(x.get_object()["/Subtype"] == "/Image" for x in page["/Resources"]["/XObject"].values())
+    # PDF/A: every font of the page is embedded (no standard font slipped in)
+    for font in page["/Resources"]["/Font"].values():
+        assert "/FontFile2" in font.get_object()["/FontDescriptor"].get_object()
+    text = _pdf_text(invoice.pdf_path)
+    for expected in ("Rechnungsnr.", invoice.invoice_number, "Leistungsdatum", "Zahlbar bis 15.10.2026", "Kundennr.",
+                     "Ihre USt-IdNr. ATU13585627", "ÖSTERREICH", "Bankverbindung", "IBAN DE02 1203 0000 0000 2020 51",
+                     "Steuernr. 12/345/67890", "Seite 1 von 1", "zzgl. 19 % USt. auf 200,00 €", "Gesamtbetrag 257,26 €"):
+        assert expected in text, expected
+    xml = get_facturx_xml_from_pdf(open(invoice.pdf_path, "rb").read())[1]
+    assert validate_en16931(xml) == []
+
+
+def test_long_invoices_continue_on_further_pages(controller, seller):
+    c = controller
+    items = [{"title": f"Position {i}", "description": "Beschreibung " * 30, "quantity": 1, "unit_price": 10.0,
+              "tax_percent": 19.0} for i in range(40)]
+    invoice = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, items, status="Offen"))
+    reader = PdfReader(invoice.pdf_path)
+    assert len(reader.pages) > 2
+    last = " ".join(reader.pages[-1].extract_text().split())
+    assert f"Seite {len(reader.pages)} von {len(reader.pages)}" in last and "Mit freundlichen Grüßen" in last

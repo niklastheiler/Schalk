@@ -21,12 +21,27 @@ from src.utils import paths  # noqa: E402
 from src.utils.invoice_documents import archive_invoice_document, build_invoice_pdf, export_xrechnung, validate_invoice  # noqa: E402
 
 
+def demo_logo(folder: str) -> str:
+    """A logo with a transparent background: the samples (and the PDF/A check of the workflow) cover logos as well."""
+    from PIL import Image, ImageDraw, ImageFont
+    fonts = os.path.join(ROOT, "src", "resources", "fonts")
+    blue = (30, 58, 95, 255)
+    image = Image.new("RGBA", (900, 240), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 20, 200, 220), radius=44, fill=blue)
+    draw.text((100, 112), "T", font=ImageFont.truetype(os.path.join(fonts, "Inter-SemiBold.ttf"), 150), fill="white", anchor="mm")
+    draw.text((240, 118), "Test & Söhne", font=ImageFont.truetype(os.path.join(fonts, "Inter-SemiBold.ttf"), 96), fill=blue, anchor="lm")
+    path = os.path.join(folder, "logo.png")
+    image.save(path)
+    return path
+
+
 def create_samples(target: str) -> list:
     os.makedirs(target, exist_ok=True)
     controller = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
     controller.archiver = lambda invoice_id: archive_invoice_document(controller, invoice_id)
     controller.einvoice_validator = lambda invoice: validate_invoice(controller, invoice)
-    controller.set_settings(SELLER)
+    controller.set_settings(dict(SELLER, logo_path=demo_logo(TEMP_DATA_DIR)))
     written = []
     try:
         for name, create in CASES.items():

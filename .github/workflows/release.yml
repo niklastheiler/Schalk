@@ -60,7 +60,7 @@ jobs:
         run: |
           # The official validation rules (XRechnung export) and the PDF fonts must be part of the EXE
           foreach ($resource in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt",
-                                "fonts/DejaVuSans.ttf", "fonts/DejaVuSans-Bold.ttf") {
+                                "fonts/Inter.ttf", "fonts/Inter-SemiBold.ttf") {
             if (-not (Test-Path "dist/Schalk/_internal/src/resources/$resource")) { throw "Datei fehlt in der EXE: $resource" }
           }
           # Data files of libraries that are read at runtime (a missing one crashes Schalk on start)
