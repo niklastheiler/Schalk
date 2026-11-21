@@ -107,7 +107,7 @@ class DocumentEditor(QWidget):
         self.customerDropdownBtn.clicked.connect(self.show_all_customers)
         self.customerSearch.hBoxLayout.addWidget(self.customerDropdownBtn, 0, Qt.AlignRight)
         self.customerSearch.setTextMargins(0, 0, 90, 0)
-        customerForm.addRow("Kunde", self.customerSearch)
+        customerForm.addRow(BodyLabel("Kunde"), self.customerSearch)
         self.customerHint = BodyLabel("")
         customerForm.addRow("", self.customerHint)
 

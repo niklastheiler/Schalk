@@ -1,7 +1,7 @@
 import re
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
+from qfluentwidgets import BodyLabel, FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController
 from src.utils.signal_bus import SignalBus
@@ -81,7 +81,7 @@ class CustomerEditor(QWidget):
         for key, label, placeholder in self.FIELDS:
             edit = LineEdit()
             edit.setPlaceholderText(placeholder)
-            form.addRow(label, edit)
+            form.addRow(BodyLabel(label), edit)
             self.edits[key] = edit
         content_layout.addLayout(form)
         content_layout.addStretch(1)

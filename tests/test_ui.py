@@ -253,3 +253,15 @@ def test_item_table_leaves_the_mouse_to_its_fields(window, qapp):
     assert not table.hasAutoScroll() and table.focusPolicy() == Qt.NoFocus
     table.entered.emit(table.model().index(0, 0))
     assert table.delegate.hoverRow == -1
+
+
+def test_form_labels_use_the_fluent_label(window):
+    # Plain labels were drawn pale on the window background (e.g. "Rechnungsdatum")
+    from PySide6.QtWidgets import QFormLayout, QLabel
+    from qfluentwidgets import BodyLabel
+    for page in (window.invoice_interface.editor, window.quote_interface.editor, window.customer_interface):
+        for form in page.findChildren(QFormLayout):
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, QFormLayout.LabelRole)
+                if item and isinstance(item.widget(), QLabel) and item.widget().text():
+                    assert isinstance(item.widget(), BodyLabel), item.widget().text()
