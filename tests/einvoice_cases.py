@@ -100,6 +100,8 @@ def units_and_rounding(c):
         {"title": "Miete Gerüst", "quantity": 2.5, "unit": "Monat", "unit_price": 333.33, "tax_percent": 19.0},
         {"title": "Leihgerät", "quantity": 3, "unit": "Tag", "unit_price": 0.01, "tax_percent": 19.0},
         {"title": "Lebensmittel", "quantity": 7, "unit": "Stück", "unit_price": 0.995, "tax_percent": 7.0},
+        {"title": "Wartungsvertrag", "quantity": 2, "unit": "Wochen", "unit_price": 120.0, "tax_percent": 19.0},
+        {"title": "Strom Baustelle", "quantity": 125.5, "unit": "kWh", "unit_price": 0.32, "tax_percent": 19.0},
     ])
 
 

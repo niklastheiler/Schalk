@@ -2,6 +2,8 @@
 Building blocks shared by all pages: virtual table model (no widgets per row, so tens of
 thousands of records stay fluid), filter proxy, list page base class and message helpers.
 """
+import logging
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -18,8 +20,13 @@ from PySide6.QtWidgets import QStyledItemDelegate
 from PySide6.QtCore import QByteArray
 from PySide6.QtSvg import QSvgRenderer
 from qfluentwidgets import themeColor
+from src.utils import text as _text
+
+logger = logging.getLogger(__name__)
 
 RECORD_ROLE = Qt.UserRole + 1
+# Only documents are handed to Windows: a disguised program (e.g. a .bat file) would be run instead of shown
+OPENABLE_EXTENSIONS = (".pdf", ".xml")
 
 COLOR_GREEN = QColor("#D3EBCD")
 COLOR_RED = QColor("#FFD6D6")
@@ -28,9 +35,7 @@ COLOR_GREY = QColor("#E6E6E6")
 
 MONTHS = ["Alle Monate"] + [f"{m:02d}" for m in range(1, 13)]
 
-
-def fmt_money(value: float) -> str:
-    return f"{value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+fmt_money = _text.fmt_money
 
 
 def fmt_date(value: Optional[datetime]) -> str:
@@ -93,6 +98,33 @@ def make_scrollable(content: QWidget) -> QScrollArea:
     content.setAutoFillBackground(False)
     style_scrollbars(area)
     return area
+
+
+def open_document(parent, path: str, print_document: bool = False) -> bool:
+    """Opens (or prints) a PDF or XML file with the program Windows has for it. Returns True on success."""
+    if not path or not os.path.isfile(path):
+        notify_error(parent, "Datei nicht gefunden", path or "")
+        return False
+    extension = os.path.splitext(path)[1].lower()
+    if extension not in OPENABLE_EXTENSIONS:
+        notify_error(parent, "Nicht geöffnet", "Aus Sicherheitsgründen öffnet Schalk nur PDF- und XML-Dateien.")
+        return False
+    if print_document:
+        try:
+            os.startfile(path, "print")
+            return True
+        except OSError:
+            # e.g. Microsoft Edge as PDF viewer offers no "print" command: open the PDF for printing instead
+            logger.info("Direktdruck von %s nicht möglich", path, exc_info=True)
+            notify_warning(parent, "Direktdruck nicht möglich", "Das PDF wird geöffnet, bitte dort drucken (Strg+P).")
+    try:
+        os.startfile(path)
+        return True
+    except OSError as e:
+        logger.warning("%s konnte nicht geöffnet werden: %s", path, e)
+        notify_error(parent, "Datei kann nicht geöffnet werden",
+                     f"Für {extension}-Dateien ist kein Programm eingerichtet ({e}).")
+        return False
 
 
 def confirm(parent, title: str, text: str) -> bool:

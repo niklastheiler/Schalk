@@ -24,9 +24,17 @@ def _german_number(value: float) -> str:
     return f"{value:.2f}".replace('.', ',')
 
 
+_GERMAN = QLocale(QLocale.German, QLocale.Germany)
+
+
 def _parse_number(text: str, default: float) -> float:
+    """German input as the validator accepts it: '1.500' is one thousand five hundred, '1,5' one and a half."""
+    text = text.strip()
+    value, ok = _GERMAN.toDouble(text)
+    if ok:
+        return value
     try:
-        return float(text.replace('.', '').replace(',', '.')) if ',' in text else float(text)
+        return float(text) # a decimal point typed out of habit, e.g. '12.5'
     except ValueError:
         return default
 
@@ -34,7 +42,7 @@ def _parse_number(text: str, default: float) -> float:
 def _number_validator() -> QDoubleValidator:
     validator = QDoubleValidator(0.0, 100_000_000.0, 2)
     validator.setNotation(QDoubleValidator.StandardNotation)
-    validator.setLocale(QLocale(QLocale.German, QLocale.Germany))
+    validator.setLocale(_GERMAN)
     return validator
 
 

@@ -12,23 +12,29 @@ from drafthorse.models.party import TaxRegistration
 from drafthorse.models.payment import PaymentMeans, PaymentTerms
 from drafthorse.models.tradelines import AllowanceCharge, LineItem
 from src.utils.calculations import tax_breakdown, round_money
+from src.utils.text import payment_terms_text
 from src.utils.tax import vat_category
 
 GUIDELINE_EN16931 = "urn:cen.eu:en16931:2017"
 GUIDELINE_XRECHNUNG = "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0"
 BUSINESS_PROCESS = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"
 
-# UN/ECE Rec. 20 unit codes
+# UN/ECE Rec. 20 unit codes; units not listed are sent as C62 ("one", i.e. piece)
 UNIT_CODES = {
-    "stück": "C62", "stk": "C62", "stk.": "C62",
+    "stück": "C62", "stk": "C62", "stk.": "C62", "st": "C62", "st.": "C62", "stck": "C62", "stck.": "C62",
+    "minute": "MIN", "minuten": "MIN", "min": "MIN", "min.": "MIN",
     "stunde": "HUR", "stunden": "HUR", "std": "HUR", "std.": "HUR", "h": "HUR",
-    "tag": "DAY", "tage": "DAY",
+    "tag": "DAY", "tage": "DAY", "woche": "WEE", "wochen": "WEE",
+    "monat": "MON", "monate": "MON", "jahr": "ANN", "jahre": "ANN",
     "kg": "KGM", "kilogramm": "KGM", "g": "GRM", "gramm": "GRM", "t": "TNE", "tonne": "TNE", "tonnen": "TNE",
-    "m": "MTR", "meter": "MTR", "m²": "MTK", "m2": "MTK", "qm": "MTK", "quadratmeter": "MTK",
-    "m³": "MTQ", "m3": "MTQ", "kubikmeter": "MTQ", "km": "KMT", "kilometer": "KMT",
-    "l": "LTR", "liter": "LTR",
+    "mm": "MMT", "millimeter": "MMT", "cm": "CMT", "zentimeter": "CMT", "m": "MTR", "meter": "MTR",
+    "km": "KMT", "kilometer": "KMT",
+    "m²": "MTK", "m2": "MTK", "qm": "MTK", "quadratmeter": "MTK",
+    "m³": "MTQ", "m3": "MTQ", "kubikmeter": "MTQ",
+    "ml": "MLT", "milliliter": "MLT", "l": "LTR", "liter": "LTR",
+    "kwh": "KWH", "kilowattstunde": "KWH", "kilowattstunden": "KWH",
+    "paar": "PR", "set": "SET", "satz": "SET",
     "pauschal": "LS", "pauschale": "LS", "psch": "LS", "psch.": "LS",
-    "monat": "MON", "monate": "MON",
 }
 
 def country_code(code) -> str:
@@ -165,7 +171,7 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
     if not is_storno:
         payment_days = db_controller.payment_terms_of(invoice)
         terms = PaymentTerms()
-        terms.description = f"Zahlbar innerhalb von {payment_days} Tagen ohne Abzug."
+        terms.description = f"Zahlbar {payment_terms_text(payment_days)} ohne Abzug."
         terms.due = _date(invoice.invoice_date + timedelta(days=payment_days))
         settlement.terms.add(terms)
 

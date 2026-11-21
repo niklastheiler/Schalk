@@ -1,6 +1,4 @@
 import logging
-import os
-import tempfile
 from datetime import datetime
 from PySide6.QtWidgets import QFileDialog
 from qfluentwidgets import FluentIcon as FIF, RoundMenu
@@ -8,7 +6,7 @@ from src.controllers.db_controller import DBController, GoBDError
 from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_RED, COLOR_YELLOW, Column, ListPage, fmt_date, fmt_money, notify_error, notify_success
+from src.views.common import COLOR_RED, COLOR_YELLOW, Column, ListPage, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.invoice_interface import RIGHT, _naive, add_action
 
 logger = logging.getLogger(__name__)
@@ -102,7 +100,7 @@ class ReminderInterface(ListPage):
         invoice = self.db_controller.get_invoice(invoice_id)
         filename = f"Mahnung_{level}_{invoice.invoice_number}.pdf"
         if print_only:
-            target = os.path.join(tempfile.gettempdir(), filename)
+            target = paths.temp_document(filename)
         else:
             target, _ = QFileDialog.getSaveFileName(self, "Mahnung speichern unter", paths.desktop_path(filename), "PDF (*.pdf)")
             if not target:
@@ -110,7 +108,7 @@ class ReminderInterface(ListPage):
         try:
             PDFGenerator(self.db_controller).generate_reminder_pdf(invoice, target, level)
             if print_only:
-                os.startfile(target, "print")
+                open_document(self, target, print_document=True)
                 return
             self.db_controller.record_reminder(invoice_id, level)
         except GoBDError as e:

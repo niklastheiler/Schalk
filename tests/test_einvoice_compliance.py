@@ -32,4 +32,19 @@ def test_units_are_mapped_to_un_ece_codes(controller, seller):
     c = controller
     xml = build_cii_xml(c.get_invoice(CASES["Einheiten_und_Rundung"](c)), c, "xrechnung").decode()
     codes = re.findall(r'unitCode="([^"]+)"', xml)
-    assert codes == ["KGM", "MTR", "LTR", "KMT", "MON", "DAY", "C62"]
+    assert codes == ["KGM", "MTR", "LTR", "KMT", "MON", "DAY", "C62", "WEE", "KWH"]
+
+
+def test_all_unit_codes_are_in_the_official_code_list(controller, seller):
+    # BR-CL-23: unknown unit codes make the recipient's portal reject the invoice
+    from datetime import datetime, timezone
+    from src.utils.zugferd_generator import UNIT_CODES
+    c = controller
+    day = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    customer = c.add_customer(company_name="Kunde AG", address="Weg 2", postal_code="20095", city="Hamburg", email="a@kunde.de")
+    units = {code: unit for unit, code in UNIT_CODES.items()}
+    items = [{"title": f"Einheit {code}", "quantity": 1, "unit": unit, "unit_price": 1.0, "tax_percent": 19.0} for code, unit in units.items()]
+    invoice = c.get_invoice(c.create_invoice(customer, day, day, items, status="Offen"))
+    xml = build_cii_xml(invoice, c, "xrechnung")
+    assert sorted(set(re.findall(r'unitCode="([^"]+)"', xml.decode()))) == sorted(units)
+    assert validate_xrechnung(xml) == []

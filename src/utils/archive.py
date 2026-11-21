@@ -4,6 +4,9 @@ import shutil
 import stat
 from datetime import datetime
 
+# Windows paths are limited to 260 characters; long names of downloaded files are shortened
+MAX_NAME_LENGTH = 80
+
 
 def file_sha256(path: str) -> str:
     sha256 = hashlib.sha256()
@@ -19,17 +22,23 @@ def is_pdf(path: str) -> bool:
         return f.read(5) == b"%PDF-"
 
 
-def archive_file(source_path: str, target_dir: str, prefix: str = "") -> tuple:
+def archive_file(source_path: str, target_dir: str, prefix: str = "", extension: str = None) -> tuple:
     """
     Copies a file into the archive directory under a unique name and marks it read-only
     (GoBD: archived documents must not be overwritten or altered).
+    extension replaces the file's own extension: a PDF is always archived as .pdf, so opening it never
+    runs a disguised program (e.g. a script named Rechnung.bat that starts with %PDF-).
     Returns (archived_path, sha256).
     """
     os.makedirs(target_dir, exist_ok=True)
-    filename = os.path.basename(source_path)
-    stamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-    safe_name = f"{prefix}{stamp}_{filename}" if prefix else f"{stamp}_{filename}"
-    dest_path = os.path.join(target_dir, safe_name)
+    stem, own_extension = os.path.splitext(os.path.basename(source_path))
+    name = f"{prefix}{datetime.now():%Y%m%d%H%M%S%f}_{stem[:MAX_NAME_LENGTH]}"
+    extension = extension or own_extension
+    dest_path = os.path.join(target_dir, name + extension)
+    counter = 1
+    while os.path.exists(dest_path):
+        counter += 1
+        dest_path = os.path.join(target_dir, f"{name}_{counter}{extension}")
 
     shutil.copy2(source_path, dest_path)
     make_read_only(dest_path)
@@ -41,6 +50,15 @@ def make_read_only(path: str):
         os.chmod(path, stat.S_IREAD)
     except OSError:
         pass
+
+
+def remove_tree(path: str):
+    """Deletes a folder with archived (read-only) files; Windows refuses to delete read-only files otherwise."""
+    def make_writable(function, failed_path, error):
+        os.chmod(failed_path, stat.S_IWRITE)
+        function(failed_path)
+    if os.path.isdir(path):
+        shutil.rmtree(path, onexc=make_writable)
 
 
 def verify_file(path: str, expected_hash: str) -> bool:

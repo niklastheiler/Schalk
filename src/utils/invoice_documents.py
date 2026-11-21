@@ -3,6 +3,7 @@ import os
 import tempfile
 from facturx import generate_from_binary
 from src.controllers.db_controller import DBController, GoBDError
+from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.pdfa import add_output_intent
 from src.utils.einvoice_validation import validate_en16931, validate_xrechnung
@@ -37,7 +38,7 @@ def archive_invoice_document(db_controller: DBController, invoice_id: int) -> st
     """Renders a finalized invoice once and stores it read-only in the archive (GoBD)."""
     invoice = db_controller.get_invoice(invoice_id)
     if invoice.pdf_path:
-        return invoice.pdf_path
+        return paths.resolve(invoice.pdf_path)
     with tempfile.TemporaryDirectory() as temp_dir:
         path = os.path.join(temp_dir, f"Rechnung_{invoice.invoice_number}.pdf")
         with open(path, "wb") as f:
@@ -52,7 +53,7 @@ def build_invoice_pdf(db_controller: DBController, invoice) -> str:
     """
     invoice = db_controller.get_invoice(invoice.id) # with items
     if not db_controller.is_finalized(invoice):
-        preview = os.path.join(tempfile.gettempdir(), f"Schalk_Entwurf_{invoice.id}.pdf")
+        preview = paths.temp_document(f"Rechnungsentwurf_{invoice.id}.pdf")
         PDFGenerator(db_controller).generate_invoice_pdf(invoice, preview)
         return preview
     return db_controller.get_archived_invoice_pdf(invoice) or archive_invoice_document(db_controller, invoice.id)
