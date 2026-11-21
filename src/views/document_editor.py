@@ -107,7 +107,7 @@ class DocumentEditor(QWidget):
         self.customerDropdownBtn.clicked.connect(self.show_all_customers)
         self.customerSearch.hBoxLayout.addWidget(self.customerDropdownBtn, 0, Qt.AlignRight)
         self.customerSearch.setTextMargins(0, 0, 90, 0)
-        customerForm.addRow("Kunde", self.customerSearch)
+        customerForm.addRow(BodyLabel("Kunde"), self.customerSearch)
         self.customerHint = BodyLabel("")
         customerForm.addRow("", self.customerHint)
 
@@ -148,6 +148,14 @@ class DocumentEditor(QWidget):
         use_classic_scrollbars(self.table)
         self.table.setMinimumHeight(240)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        # The cells hold input fields: the table itself must not react to the mouse. Its hover highlight
+        # repainted the row under the fields on every mouse move, a click between the fields opened the
+        # table's own editor on top of them, and it scrolled to the hovered cell.
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setMouseTracking(False)
+        self.table.entered.disconnect()
+        self.table.setAutoScroll(False)
+        self.table.setFocusPolicy(Qt.NoFocus)
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(['Bezeichnung', 'Menge', 'Einheit', 'Einzelpreis (€)', 'MwSt.', ''])
         header = self.table.horizontalHeader()

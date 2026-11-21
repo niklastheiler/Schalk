@@ -21,7 +21,7 @@ class InvoiceEditor(DocumentEditor):
 
     def add_document_fields(self, form: QFormLayout):
         self.invoiceDate = GermanDatePicker()
-        form.addRow("Rechnungsdatum", self.invoiceDate)
+        form.addRow(BodyLabel("Rechnungsdatum"), self.invoiceDate)
         self.deliveryDate = GermanDatePicker()
         self.deliveryLabel = BodyLabel("Leistungsdatum")
         form.addRow(self.deliveryLabel, self.deliveryDate)
