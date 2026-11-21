@@ -47,7 +47,10 @@ jobs:
         run: |
           # The built program creates, checks and exports an invoice in a temporary data folder. This finds files
           # PyInstaller did not bundle (like the currency table missing in 1.2) before the release goes out.
-          $p = Start-Process dist\Schalk\Schalk.exe -ArgumentList "--selbsttest" -Wait -PassThru
+          $p = Start-Process dist\Schalk\Schalk.exe -ArgumentList "--selbsttest" -PassThru
+          $null = $p.Handle # keeps the process handle, without it ExitCode stays empty
+          # An error dialog of the windowed EXE would otherwise block the job for hours
+          if (-not $p.WaitForExit(300000)) { Stop-Process $p -Force; throw "Selbsttest der EXE hängt (Fehlerdialog?)" }
           $report = Join-Path $env:TEMP "schalk_selbsttest.log"
           if (Test-Path $report) { Get-Content $report -Encoding utf8 }
           if ($p.ExitCode -ne 0) { throw "Selbsttest der EXE fehlgeschlagen (Exitcode $($p.ExitCode))" }

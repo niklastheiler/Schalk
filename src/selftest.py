@@ -54,18 +54,22 @@ def _check(controller):
 
 
 def run() -> int:
-    """Only call with SCHALK_DATA_DIR pointing to a temporary folder (see run.py)."""
-    from PySide6.QtCore import QCoreApplication
-    from src.controllers.db_controller import DBController
-    from src.models.database import DatabaseManager
+    """
+    Only call with SCHALK_DATA_DIR pointing to a temporary folder (see run.py). Never raises: the windowed EXE
+    would show an error dialog that nobody closes on the build server.
+    """
     from src.utils import paths
     from src.utils.archive import remove_tree
-    from src.utils.invoice_documents import archive_invoice_document, validate_invoice
 
     global _app
-    _app = QCoreApplication.instance() or QCoreApplication([]) # the signals of the controller need an application
     controller = None
     try:
+        from PySide6.QtCore import QCoreApplication
+        from src.controllers.db_controller import DBController
+        from src.models.database import DatabaseManager
+        from src.utils.invoice_documents import archive_invoice_document, validate_invoice
+
+        _app = QCoreApplication.instance() or QCoreApplication([]) # the signals of the controller need an application
         controller = DBController(DatabaseManager(paths.DB_PATH, paths.KEY_PATH))
         controller.archiver = lambda invoice_id: archive_invoice_document(controller, invoice_id)
         controller.einvoice_validator = lambda invoice: validate_invoice(controller, invoice)
@@ -74,7 +78,7 @@ def run() -> int:
         controller = None
         result = 0
         message = "Selbsttest erfolgreich\n"
-    except Exception:
+    except BaseException:
         result = 1
         message = traceback.format_exc()
     finally:
