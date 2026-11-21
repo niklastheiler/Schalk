@@ -8,13 +8,12 @@ from decimal import Decimal
 from typing import List
 from drafthorse.models.document import Document
 from drafthorse.models.accounting import ApplicableTradeTax, CategoryTradeTax, TradeAllowanceCharge
-from drafthorse.models.note import IncludedNote
 from drafthorse.models.party import TaxRegistration
 from drafthorse.models.payment import PaymentMeans, PaymentTerms
 from drafthorse.models.tradelines import AllowanceCharge, LineItem
 from src.utils.calculations import tax_breakdown, round_money
 from src.utils.text import payment_terms_text
-from src.utils.tax import RETENTION_NOTICE, vat_category
+from src.utils.tax import vat_category
 
 GUIDELINE_EN16931 = "urn:cen.eu:en16931:2017"
 GUIDELINE_XRECHNUNG = "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0"
@@ -135,10 +134,6 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         doc.trade.settlement.period.end = _date(invoice.delivery_end_date)
     else:
         doc.trade.delivery.event.occurrence = _date(invoice.delivery_date)
-    if invoice.retention_notice:
-        note = IncludedNote()
-        note.content = RETENTION_NOTICE
-        doc.header.notes.add(note)
     # Intra-community supply: the country the goods were delivered to is mandatory (BR-IC-12);
     # the delivery address is the buyer's address
     if any(vat_category(i.tax_percent, reason) == "K" for i in invoice.items):

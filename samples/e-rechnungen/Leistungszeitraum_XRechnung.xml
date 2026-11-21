@@ -14,9 +14,6 @@
     <ram:IssueDateTime>
       <udt:DateTimeString format="102">20261001</udt:DateTimeString>
     </ram:IssueDateTime>
-    <ram:IncludedNote>
-      <ram:Content>Sie sind gesetzlich verpflichtet, diese Rechnung zwei Jahre lang aufzubewahren (§ 14b Abs. 1 Satz 5 UStG). Die Frist beginnt mit dem Schluss des Kalenderjahres, in dem die Rechnung ausgestellt wurde.</ram:Content>
-    </ram:IncludedNote>
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
     <ram:IncludedSupplyChainTradeLineItem>

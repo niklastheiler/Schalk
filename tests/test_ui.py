@@ -190,10 +190,9 @@ def test_invoice_editor_service_period(window, controller, qapp):
     ed.periodCheck.setChecked(True)
     assert ed.deliveryEndDate.isVisibleTo(ed) and ed.deliveryLabel.text() == "Leistung von"
     ed.deliveryEndDate.setDate(QDate(2026, 10, 31))
-    ed.retentionCheck.setChecked(True)
     ed.save()
     qapp.processEvents()
     invoice = controller.get_invoice(controller.get_invoices()[0].id)
-    assert invoice.delivery_end_date.day == 31 and invoice.retention_notice
+    assert invoice.delivery_end_date.day == 31
     ii.show_editor(invoice.id)
-    assert ed.periodCheck.isChecked() and ed.retentionCheck.isChecked()
+    assert ed.periodCheck.isChecked()

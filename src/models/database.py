@@ -54,8 +54,6 @@ class Invoice(Base):
     delivery_date = Column(DateTime, nullable=False)
     # Leistungszeitraum: delivery_date is its start, this its end (None = a single day of delivery)
     delivery_end_date = Column(DateTime)
-    # Hinweis auf die Aufbewahrungspflicht des Kunden (§ 14 Abs. 4 Nr. 9 UStG: work on a property for a private person)
-    retention_notice = Column(Boolean)
     status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Teilbezahlt, Bezahlt, Überfällig, Storniert
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)

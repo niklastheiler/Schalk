@@ -28,7 +28,7 @@ from src.controllers.db_controller import DBController
 from src.models.database import Invoice
 from src.utils import paths
 from src.utils.calculations import tax_breakdown
-from src.utils.tax import RETENTION_NOTICE, format_rate
+from src.utils.tax import format_rate
 from src.utils.text import fmt_money, fmt_number, fmt_price, payment_terms_text
 
 FONT = "Inter"
@@ -485,8 +485,6 @@ class PDFGenerator:
                      Spacer(1, 7 * mm)]
         if invoice.tax_exemption_reason:
             elements += [self._note(f"Hinweis: {invoice.tax_exemption_reason}"), Spacer(1, 5 * mm)]
-        if invoice.retention_notice:
-            elements += [self._note(f"Hinweis zur Aufbewahrung: {RETENTION_NOTICE}"), Spacer(1, 5 * mm)]
         if storno:
             elements += self._closing(seller, "Mit dieser Stornorechnung wird die oben genannte Rechnung vollständig "
                                               "aufgehoben. Bereits gezahlte Beträge werden verrechnet bzw. erstattet.")

@@ -651,8 +651,6 @@ class DBController:
         # Added in version 1.3; only present when used, so the hashes of older invoices stay valid
         if invoice.delivery_end_date:
             payload["delivery_end_date"] = _iso(invoice.delivery_end_date)
-        if invoice.retention_notice:
-            payload["retention_notice"] = True
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     def _last_invoice_hash(self, session: Session, exclude_id: int) -> str:
@@ -732,7 +730,6 @@ class DBController:
                 invoice_date=invoice_date,
                 delivery_date=delivery_date,
                 delivery_end_date=self._delivery_end(delivery_date, kwargs.get("delivery_end_date")),
-                retention_notice=bool(kwargs.get("retention_notice")),
                 net_amount=totals["net_amount"],
                 tax_amount=totals["tax_amount"],
                 gross_amount=totals["gross_amount"],
@@ -786,7 +783,6 @@ class DBController:
             invoice.invoice_date = invoice_date
             invoice.delivery_date = delivery_date
             invoice.delivery_end_date = self._delivery_end(delivery_date, kwargs.get("delivery_end_date"))
-            invoice.retention_notice = bool(kwargs.get("retention_notice"))
             invoice.net_amount = totals["net_amount"]
             invoice.tax_amount = totals["tax_amount"]
             invoice.gross_amount = totals["gross_amount"]
@@ -861,7 +857,6 @@ class DBController:
                 invoice_date=datetime.combine(datetime.now().date(), datetime.min.time()),
                 delivery_date=original.delivery_date,
                 delivery_end_date=original.delivery_end_date,
-                retention_notice=original.retention_notice,
                 net_amount=0.0 - original.net_amount,
                 tax_amount=0.0 - original.tax_amount,
                 gross_amount=0.0 - original.gross_amount,
