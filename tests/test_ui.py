@@ -196,3 +196,46 @@ def test_invoice_editor_service_period(window, controller, qapp):
     assert invoice.delivery_end_date.day == 31
     ii.show_editor(invoice.id)
     assert ed.periodCheck.isChecked()
+
+
+def test_monthly_backup_reminder(window, controller, qapp, data_dir, monkeypatch):
+    import time
+    from datetime import datetime, timedelta
+    from qfluentwidgets import MessageBox
+    asked = []
+    monkeypatch.setattr(MessageBox, "exec", lambda self: asked.append(self) or 0) # "Später"
+    controller.set_setting("last_backup", (datetime.now() - timedelta(days=40)).isoformat())
+    assert window.backup_due()
+    window.remind_of_backup()
+    assert len(asked) == 1 and window.backup_due() # postponed: asked again on the next start
+
+    # "Backup jetzt erstellen": location and password, then it counts for this month
+    monkeypatch.setattr(MessageBox, "exec", lambda self: 1)
+    window.remind_of_backup()
+    si = window.settings_interface
+    deadline = time.monotonic() + 30
+    while not si.exportBtn.isEnabled() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.02)
+    qapp.processEvents()
+    assert not window.backup_due() and next(data_dir.glob("Schalk_Backup_*.backup"), None)
+    asked.clear()
+    window.remind_of_backup()
+    assert asked == []
+
+
+def test_settings_fields_and_layout(window, controller, qapp):
+    si = window.settings_interface
+    window.switchTo(si)
+    qapp.processEvents()
+    si.paymentTermsEdit.setText("30")
+    si.save_settings()
+    assert controller.get_payment_terms() == 30
+    si.paymentTermsEdit.setText("")
+    si.save_settings()
+    assert controller.get_payment_terms() == 14
+    assert si.edits["iban"].width() == si.edits["company_name"].width() < 400
+    assert window.invoice_interface.list_page.titleLabel.text() == "Kundenrechnungen"
+    # The longest month name fits into the date picker
+    picker = window.cashbook_interface.datePicker
+    assert picker.columns[picker.monthIndex].width() >= picker.fontMetrics().boundingRect("September").width() + 40

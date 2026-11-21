@@ -5,9 +5,9 @@ import sys
 import threading
 from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
-from PySide6.QtGui import QImageReader, QPixmap
+from PySide6.QtGui import QImageReader, QIntValidator, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SpinBox, SubtitleLabel
+from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SubtitleLabel
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
@@ -24,11 +24,13 @@ logger = logging.getLogger(__name__)
 
 BACKUP_FILTER = "Schalk-Backup (*.backup)"
 LOGO_PREVIEW_WIDTH, LOGO_PREVIEW_HEIGHT = 240, 72
+# Input fields of the company and bank data: wide enough for names and an IBAN, no full-width bars
+FIELD_WIDTH = 260
 
 FIRM_FIELDS = [
     ("company_name", "Firmenname"),
-    ("first_name", "Ansprechpartner Vorname"),
-    ("last_name", "Ansprechpartner Nachname"),
+    ("first_name", "Vorname"),
+    ("last_name", "Nachname"),
     ("address", "Straße & Hausnummer"),
     ("postal_code", "PLZ"),
     ("city", "Ort"),
@@ -98,6 +100,7 @@ class SettingsInterface(QWidget):
         form.setSpacing(14)
         for key, label in fields:
             edit = LineEdit(tab)
+            edit.setFixedWidth(FIELD_WIDTH)
             form.addRow(BodyLabel(label), edit)
             self.edits[key] = edit
         if extra:
@@ -112,6 +115,7 @@ class SettingsInterface(QWidget):
             self.logoPathEdit = LineEdit(tab)
             self.logoPathEdit.setReadOnly(True)
             self.logoPathEdit.setPlaceholderText("Kein Logo ausgewählt")
+            self.logoPathEdit.setFixedWidth(FIELD_WIDTH)
             choose = PushButton("Auswählen", tab)
             choose.clicked.connect(self.select_logo)
             remove = PushButton("Entfernen", tab)
@@ -119,21 +123,17 @@ class SettingsInterface(QWidget):
             logo.addWidget(self.logoPathEdit)
             logo.addWidget(choose)
             logo.addWidget(remove)
+            logo.addStretch(1)
             form.addRow(BodyLabel("Logo"), logo)
             # The own logo as it will appear on the documents
             self.logoPreview = QLabel(tab)
             self.logoPreview.setFixedHeight(LOGO_PREVIEW_HEIGHT)
             self.logoPreview.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self.logoPathEdit.textChanged.connect(self._show_logo_preview)
-            hint = BodyLabel("Erscheint oben rechts auf Rechnungen, Angeboten und Mahnungen (PNG oder JPG, am besten mit "
-                             "transparentem Hintergrund). Ohne Logo steht dort der Firmenname.", tab)
-            hint.setWordWrap(True)
-            preview = QVBoxLayout()
-            preview.addWidget(self.logoPreview)
-            preview.addWidget(hint)
-            form.addRow(BodyLabel(""), preview)
+            form.addRow(BodyLabel(""), self.logoPreview)
             self._show_logo_preview("")
             self.documentColorCombo = ComboBox(tab)
+            self.documentColorCombo.setFixedWidth(FIELD_WIDTH)
             self.documentColorCombo.addItems(list(DOCUMENT_COLORS))
             self.documentColorCombo.setToolTip("Farbe von Überschrift, Tabellenkopf und Gesamtbetrag in Rechnungen, Angeboten und Mahnungen")
             form.addRow(BodyLabel("Farbe der Dokumente"), self.documentColorCombo)
@@ -143,9 +143,12 @@ class SettingsInterface(QWidget):
 
     def _build_bank_tab(self) -> QWidget:
         def extra(form, tab):
-            self.paymentTermsSpin = SpinBox(tab)
-            self.paymentTermsSpin.setRange(0, 365)
-            form.addRow(BodyLabel("Standard-Zahlungsziel (Tage)"), self.paymentTermsSpin)
+            # A plain field: in the spin box typed digits were appended to the shown value and refused above 365
+            self.paymentTermsEdit = LineEdit(tab)
+            self.paymentTermsEdit.setFixedWidth(FIELD_WIDTH)
+            self.paymentTermsEdit.setValidator(QIntValidator(0, 365, self.paymentTermsEdit))
+            self.paymentTermsEdit.setPlaceholderText(f"{DEFAULT_PAYMENT_TERMS} (0 = sofort)")
+            form.addRow(BodyLabel("Standard-Zahlungsziel (Tage)"), self.paymentTermsEdit)
         return self._form_tab(BANK_FIELDS, extra)
 
     def _add_backup_section(self, layout: QVBoxLayout):
@@ -222,7 +225,7 @@ class SettingsInterface(QWidget):
         self.smallBusinessCheck.setChecked(self.db_controller.is_small_business())
         color = self.db_controller.get_setting("document_color", DEFAULT_DOCUMENT_COLOR)
         self.documentColorCombo.setCurrentText(color if color in DOCUMENT_COLORS else DEFAULT_DOCUMENT_COLOR)
-        self.paymentTermsSpin.setValue(self.db_controller.get_payment_terms())
+        self.paymentTermsEdit.setText(str(self.db_controller.get_payment_terms()))
 
     def _validate(self, values: dict) -> list:
         problems = []
@@ -262,7 +265,7 @@ class SettingsInterface(QWidget):
             "logo_path": logo_path,
             "small_business": "1" if self.smallBusinessCheck.isChecked() else "0",
             "document_color": self.documentColorCombo.currentText(),
-            "payment_terms_days": str(self.paymentTermsSpin.value() if self.paymentTermsSpin.value() is not None else DEFAULT_PAYMENT_TERMS),
+            "payment_terms_days": self.paymentTermsEdit.text().strip() or str(DEFAULT_PAYMENT_TERMS),
         })
         # One save for all values (each save re-encrypts the whole database)
         self.db_controller.set_settings(values)
@@ -336,6 +339,9 @@ class SettingsInterface(QWidget):
         threading.Thread(target=run, name="schalk-backup").start()
 
     def _on_backup_finished(self, path: str, error: str):
+        if not error:
+            # For the monthly backup reminder at start
+            self.db_controller.set_setting("last_backup", datetime.now().isoformat(timespec="seconds"))
         self.exportBtn.setEnabled(True)
         self.exportBtn.setText("Backup erstellen (Export)")
         if error:

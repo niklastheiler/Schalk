@@ -23,6 +23,13 @@ class GermanDatePicker(DatePicker):
         self.addColumn(self.YEAR, range(year - 100, year + 101), 80, formatter=self.yearFormatter())
         self.setColumnWidth(self.monthIndex, self._monthColumnWidth())
 
+    def _monthColumnWidth(self):
+        # Room for the longest German month name ("September") plus the padding of the button;
+        # the tight width of the library cut off names like "November"
+        names = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember")
+        widest = max(self.fontMetrics().boundingRect(name).width() for name in names)
+        return max(widest + 56, 130)
+
     def panelInitialValue(self):
         if any(self.value()):
             return self.value()

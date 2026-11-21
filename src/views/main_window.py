@@ -1,6 +1,7 @@
+from datetime import datetime
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
-from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, Theme, setTheme
+from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme
 from src.controllers.db_controller import DBController
 from src.utils import paths
 from src.utils.signal_bus import SignalBus
@@ -13,6 +14,10 @@ from src.views.quote_interface import QuoteInterface
 from src.views.reminder_interface import ReminderInterface
 from src.views.settings_interface import SettingsInterface
 from src.views.update_notifier import UpdateNotifier
+
+
+MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
+               "November", "Dezember"]
 
 
 class MainWindow(FluentWindow):
@@ -58,12 +63,46 @@ class MainWindow(FluentWindow):
         self.setWindowTitle('Schalk')
         setTheme(Theme.LIGHT)
         self.navigationInterface.setExpandWidth(240)
+        # The menu stays expanded down to the minimum window width (the default collapses it below ~1000 px)
+        self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.center().x() - self.width() // 2, screen.center().y() - self.height() // 2)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_navigation_expanded", False):
+            # Expanded on start; afterwards the menu button collapses and expands it as usual
+            self._navigation_expanded = True
+            QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
 
     def open_invoice(self, invoice_id: int):
         self.invoice_interface.show_editor(invoice_id)
         self.switchTo(self.invoice_interface)
+
+    def backup_due(self) -> bool:
+        """True if no backup was made in the current month yet."""
+        last = self.db_controller.get_setting("last_backup")
+        try:
+            last = datetime.fromisoformat(last) if last else None
+        except ValueError:
+            last = None
+        now = datetime.now()
+        return last is None or (last.year, last.month) != (now.year, now.month)
+
+    def remind_of_backup(self):
+        """At the start of every month (and on each start until it is done): ask for a backup."""
+        if not self.backup_due():
+            return
+        month = f"{MONTH_NAMES[datetime.now().month - 1]} {datetime.now().year}"
+        box = MessageBox("Monatliches Backup",
+                         f"Für {month} wurde noch kein Backup erstellt. Ein Backup sichert alle Daten und Dokumente in einer "
+                         "verschlüsselten Datei, z. B. auf einem USB-Stick, und schützt sie bei einem Defekt oder PC-Wechsel.",
+                         self)
+        box.yesButton.setText("Backup jetzt erstellen")
+        box.cancelButton.setText("Später")
+        if box.exec():
+            self.switchTo(self.settings_interface)
+            self.settings_interface.export_backup()
 
     def check_integrity_on_startup(self):
         """GoBD: warn if booked data was altered outside the app. Runs in the background."""
