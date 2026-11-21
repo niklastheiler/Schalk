@@ -2,6 +2,7 @@ import os
 import logging
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -192,6 +193,9 @@ class KeyMissingError(Exception):
 FILE_MAGIC = b"SCHALK2\x00"
 
 
+REPLACE_ATTEMPTS = 5
+
+
 def _write_atomic(path: str, payload: bytes):
     # Atomic replace: a crash while writing never leaves a half-written file behind
     temp_path = path + ".tmp"
@@ -199,7 +203,15 @@ def _write_atomic(path: str, payload: bytes):
         f.write(payload)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(temp_path, path)
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(temp_path, path)
+            return
+        except PermissionError:
+            # Windows: a virus scanner or backup program may hold the file open for a moment
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 class _BackgroundWriter:
@@ -289,7 +301,15 @@ class DatabaseManager:
             raise WrongPasswordError(f"Die Datei {self.db_path} ist keine Schalk-Datenbank.")
 
         if os.path.exists(self.key_path):
-            self.fernet = Fernet(key_store.load_key(self.key_path))
+            try:
+                self.fernet = Fernet(key_store.load_key(self.key_path))
+            except Exception as e:
+                # DPAPI refuses keys of another Windows account or of a reset user profile
+                logger.exception("Datenbankschlüssel konnte nicht gelesen werden")
+                raise KeyMissingError(
+                    f"Der Schlüssel zur Datenbank ({self.key_path}) kann von diesem Windows-Benutzer nicht gelesen werden. "
+                    "Er gehört zu einem anderen Benutzerkonto oder das Benutzerprofil wurde zurückgesetzt. "
+                    "Bitte die Daten über ein Backup wiederherstellen.") from e
         elif data:
             raise KeyMissingError(
                 f"Der Schlüssel zur Datenbank fehlt ({self.key_path}) oder gehört zu einem anderen Windows-Benutzer. "
@@ -326,7 +346,22 @@ class DatabaseManager:
             connect_args={'check_same_thread': False}
         )
         Base.metadata.create_all(self.engine)
+        self._add_missing_columns()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+
+    def _add_missing_columns(self):
+        """
+        Schema update for databases of older versions: create_all only creates missing tables, so columns
+        added to a model later are added here. New columns must therefore be nullable.
+        """
+        with self.engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                existing = {row[1] for row in conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')}
+                for column in table.columns:
+                    if column.name not in existing:
+                        column_type = column.type.compile(dialect=self.engine.dialect)
+                        conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}')
+                        logger.info("Datenbank: Spalte %s.%s ergänzt", table.name, column.name)
 
     def save(self):
         """Persists the current state; encryption and disk I/O run in the background."""

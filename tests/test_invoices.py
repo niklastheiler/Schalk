@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from facturx import get_facturx_xml_from_pdf
 from pypdf import PdfReader
@@ -139,3 +139,99 @@ def test_quote_to_invoice(controller):
 def test_pdf_texts_are_escaped_and_keep_line_breaks():
     from src.utils.pdf_generator import _markup
     assert _markup("Rohr <Ø 50> & Co.\nZweite Zeile\r\nDritte") == "Rohr &lt;Ø 50&gt; &amp; Co.<br/>Zweite Zeile<br/>Dritte"
+
+
+def test_export_requires_own_vat_id(controller, seller):
+    # EN 16931 BR-G-02: an export invoice needs the seller's VAT ID, the tax number alone is not enough
+    c = controller
+    c.set_settings({"vat_id": ""})
+    invoice_id = c.create_invoice(_customer(c, country="CH", city="Zürich", postal_code="8001"), DAY, DAY,
+                                  [{"title": "Ersatzteil", "quantity": 1, "unit_price": 80.0, "tax_percent": 0.0}],
+                                  tax_exemption_reason="Steuerfreie Ausfuhrlieferung gemäß § 4 Nr. 1a UStG")
+    ok, message = c.update_invoice_status(invoice_id, "Offen")
+    assert not ok and "Ausfuhrlieferung ist die eigene USt-IdNr. Pflicht" in message
+
+
+@pytest.mark.parametrize("item, text", [
+    ({"unit_price": -10.0}, "darf nicht negativ"),
+    ({"discount_percent": 150}, "zwischen 0 und 100"),
+    ({"quantity": float("nan")}, "ungültige Zahl"),
+    ({"unit_price": float("inf")}, "ungültige Zahl"),
+])
+def test_invalid_items_are_refused(controller, item, text):
+    line = dict({"title": "X", "quantity": 1, "unit_price": 5.0, "tax_percent": 19.0}, **item)
+    with pytest.raises(ValueError, match=text):
+        controller.create_invoice(_customer(controller), DAY, DAY, [line])
+
+
+def test_negative_credit_is_refused(controller):
+    with pytest.raises(ValueError, match="nicht negativ"):
+        controller.create_invoice(_customer(controller), DAY, DAY, ITEMS, credit_amount=-5)
+
+
+def test_reminders_only_for_unpaid_invoices(controller, seller):
+    c = controller
+    invoice_id = c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen")
+    c.update_invoice_status(invoice_id, "Bezahlt")
+    with pytest.raises(GoBDError, match="Mahnung ist nicht möglich"):
+        c.record_reminder(invoice_id, 1)
+    assert c.get_invoice(invoice_id).status == "Bezahlt"
+
+
+def test_clock_set_back_does_not_break_the_hash_chain(controller, seller, monkeypatch):
+    # Time synchronisation or the end of daylight saving time can turn the clock back between two finalizations
+    from src.controllers import db_controller
+    c = controller
+    first = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen"))
+
+    class EarlierClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) - timedelta(hours=2)
+    monkeypatch.setattr(db_controller, "datetime", EarlierClock)
+    second = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen"))
+    assert second.finalized_at > first.finalized_at
+    assert c.verify_integrity() == []
+
+
+def _pdf_text(path) -> str:
+    # Whitespace normalized: table cells wrap their text over several lines
+    return " ".join(" ".join(page.extract_text() for page in PdfReader(path).pages).split())
+
+
+def test_invoice_pdf_texts(controller, seller):
+    c = controller
+    customer_id = _customer(c, company_name="Łukasz Wiśniewski Dvořák", city="Łódź")
+    invoice_id = c.create_invoice(customer_id, DAY, DAY, [
+        {"title": "Kies", "quantity": 2.375, "unit": "Kilogramm", "unit_price": 0.4375, "tax_percent": 19.0},
+        {"title": "Montage", "quantity": 1, "unit_price": 100.0, "discount_percent": 12.5, "tax_percent": 0.0},
+    ], status="Offen", tax_exemption_reason="Steuerfreie Leistung gemäß § 4 UStG")
+    text = _pdf_text(c.get_invoice(invoice_id).pdf_path)
+    # Names with Polish and Czech letters are printed completely (the font has the glyphs)
+    assert "Łukasz Wiśniewski Dvořák" in text and "Łódź" in text
+    # Exact quantities and prices instead of values rounded to two decimals
+    assert "2,375 Kilogramm" in text and "0,4375 €" in text and "12,5 % Rabatt" in text
+    assert "innerhalb von 14 Tagen ohne Abzug" in text
+
+    c.update_invoice_status(invoice_id, "Storniert")
+    storno = next(i for i in c.get_invoices() if i.cancels_invoice_id == invoice_id)
+    assert "-0,00" not in _pdf_text(build_invoice_pdf(c, storno))
+
+
+def test_immediate_payment_terms(controller, seller):
+    c = controller
+    c.set_settings({"payment_terms_days": "0"})
+    invoice = c.get_invoice(c.create_invoice(_customer(c), DAY, DAY, ITEMS, status="Offen"))
+    assert "Betrag sofort ohne Abzug unter Angabe" in _pdf_text(invoice.pdf_path)
+    xml = get_facturx_xml_from_pdf(open(invoice.pdf_path, "rb").read())[1]
+    assert "Zahlbar sofort ohne Abzug.".encode() in xml and validate_en16931(xml) == []
+
+
+def test_pdf_font_covers_european_names():
+    from reportlab.pdfbase import pdfmetrics
+    from src.utils.pdf_generator import FONT, FONT_BOLD, _register_fonts
+    _register_fonts()
+    letters = "äöüßÄÖÜ€łŁńśźżćęąčřšžůőűŞşğıİçñåøæ–„“”"
+    for name in (FONT, FONT_BOLD):
+        cmap = pdfmetrics.getFont(name).face.charToGlyph
+        assert [ch for ch in letters if ord(ch) not in cmap] == []

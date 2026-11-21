@@ -1,15 +1,13 @@
 import logging
-import os
 import shutil
-import tempfile
-
 from PySide6.QtWidgets import QFileDialog, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon as FIF, RoundMenu
 from src.controllers.db_controller import DBController, GoBDError, QUOTE_STATUSES
 from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREEN, COLOR_GREY, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.common import (COLOR_GREEN, COLOR_GREY, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money, notify_error,
+                              notify_success, open_document)
 from src.views.invoice_interface import RIGHT, _naive, add_action
 from src.views.quote_editor import QuoteEditor
 
@@ -100,25 +98,37 @@ class QuoteInterface(QWidget):
 
     def _render(self, quote_id) -> str:
         quote = self.db_controller.get_quote(quote_id)
-        path = os.path.join(tempfile.gettempdir(), f"Schalk_Angebot_{quote.quote_number}.pdf")
+        path = paths.temp_document(f"Angebot_{quote.quote_number}.pdf")
         PDFGenerator(self.db_controller).generate_quote_pdf(quote, path)
         return path
 
-    def open_pdf(self, quote_id, print_only=False):
+    def _render_or_report(self, quote_id):
         try:
-            path = self._render(quote_id)
+            return self._render(quote_id)
         except Exception as e:
             logger.exception("Angebots-PDF fehlgeschlagen")
-            notify_error(self, "PDF konnte nicht erstellt werden", str(e))
-            return
-        os.startfile(path, "print") if print_only else os.startfile(path)
+            notify_error(self, "PDF konnte nicht erstellt werden", f"{e}\nDetails: {paths.LOG_PATH}")
+            return None
+
+    def open_pdf(self, quote_id, print_only=False):
+        path = self._render_or_report(quote_id)
+        if path:
+            open_document(self, path, print_document=print_only)
 
     def save_pdf(self, quote_id):
         quote = self.db_controller.get_quote(quote_id)
         target, _ = QFileDialog.getSaveFileName(self, "PDF speichern unter", paths.desktop_path(f"Angebot_{quote.quote_number}.pdf"), "PDF (*.pdf)")
-        if target:
-            shutil.copyfile(self._render(quote_id), target)
-            notify_success(self, "PDF gespeichert", target)
+        if not target:
+            return
+        path = self._render_or_report(quote_id)
+        if not path:
+            return
+        try:
+            shutil.copyfile(path, target)
+        except OSError as e:
+            notify_error(self, "PDF nicht gespeichert", str(e))
+            return
+        notify_success(self, "PDF gespeichert", target)
 
     def convert_to_invoice(self, quote_id, ask: bool = False):
         quote = self.db_controller.get_quote(quote_id)

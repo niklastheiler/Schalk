@@ -41,7 +41,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
    ```
    Das setzt `APP_VERSION` in `src/version.py` und legt den Abschnitt in `CHANGELOG.md` an (jeder Text wird ein Eintrag). Die neue Version muss größer sein als die aktuelle.
 2. Nach dem Merge auf `main` unter GitHub → Actions → Release → „Run workflow“ starten (oder einen Tag pushen, z. B. `git tag v1.1` und `git push origin v1.1`).
-3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests), baut daraus das Setup, testet es mit einer stillen Installation und Deinstallation und veröffentlicht das Release mit Setup und Changelog-Abschnitt.
+3. Der Workflow `.github/workflows/release.yml` führt zuerst die komplette E-Rechnungs-Prüfung aus (Tests und Mustang-Validator für alle Steuerfälle). Nur wenn sie besteht, baut er die EXE unter Windows (inklusive Tests) und startet sie im Selbsttest (`Schalk.exe --selbsttest`): Die fertige EXE legt in einem temporären Ordner eine Rechnung an, prüft ZUGFeRD und XRechnung und erstellt ein Backup. So fallen Dateien auf, die beim Bauen nicht mit eingepackt wurden. Danach baut er das Setup, testet es mit einer stillen Installation und Deinstallation und veröffentlicht das Release mit Setup und Changelog-Abschnitt.
 
 ## Datenablage und Sicherheit
 
@@ -50,10 +50,12 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 | Datenbank (verschlüsselt) | `%LOCALAPPDATA%\Schalk\schalk.enc.db` |
 | Schlüssel (Windows-DPAPI) | `%LOCALAPPDATA%\Schalk\schalk.key` |
 | Archivierte Rechnungen, Belege, Eingangsrechnungen | `%LOCALAPPDATA%\Schalk\app_data`, `...\assets` |
-| Protokoll | `%LOCALAPPDATA%\Schalk\schalk.log` |
+| Protokoll | `%LOCALAPPDATA%\Schalk\schalk.log` (Abstürze zusätzlich in `absturz.log`) |
+| Sicherungen vor Updates | `%LOCALAPPDATA%\Schalk\backups` |
 
 - Die Datenbank liegt nur im Arbeitsspeicher entschlüsselt vor. Auf der Festplatte steht ausschließlich die verschlüsselte Datei, sie wird im Hintergrund atomar geschrieben.
-- Der Schlüssel ist per DPAPI an das Windows-Benutzerkonto gebunden, deshalb gibt es keinen Passwort-Dialog. **Bei einer Neuinstallation von Windows oder einem PC-Wechsel sind die Daten nur über ein Backup wiederherstellbar.** Backups (Einstellungen → Sicherheit & GoBD) sind eine einzelne `.backup`-Datei mit Datenbank und allen archivierten Dokumenten. Sie ist mit einem eigenen Backup-Passwort verschlüsselt (AES-256-GCM) und lässt sich auf jedem PC einspielen.
+- Der Schlüssel ist per DPAPI an das Windows-Benutzerkonto gebunden, deshalb gibt es keinen Passwort-Dialog. **Bei einer Neuinstallation von Windows oder einem PC-Wechsel sind die Daten nur über ein Backup wiederherstellbar.** Backups (Einstellungen → Sicherheit & GoBD) sind eine einzelne `.backup`-Datei mit Datenbank und allen archivierten Dokumenten. Sie ist mit einem eigenen Backup-Passwort verschlüsselt (AES-256-GCM) und lässt sich auf jedem PC und unter jedem Windows-Benutzer einspielen, die archivierten Dokumente werden dort wiedergefunden. Ein falsches Passwort und eine beschädigte Datei werden unterschieden. Das Backup entsteht im Hintergrund, man kann währenddessen weiterarbeiten.
+- Lässt sich die Datenbank beim Start nicht öffnen (z. B. auf einem neuen PC ohne eingespieltes Backup), bietet Schalk an, mit einer leeren Datenbank zu starten. Die bisherigen Dateien werden dabei nicht gelöscht, sondern umbenannt (`….defekt-Datum`). Danach das Backup einspielen.
 - Mit der Umgebungsvariable `SCHALK_DATA_DIR` lässt sich ein anderer Datenordner festlegen.
 - Das Programm lässt sich nur einmal gleichzeitig starten.
 
@@ -73,7 +75,7 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 
 - Rechnungen erhalten ihre lückenlose Nummer erst beim Festschreiben. Danach sind sie unveränderbar und werden nur per Stornorechnung korrigiert.
 - Rechnungen und Kassenbuch sind über SHA-256-Hash-Ketten gesichert. Archivierte Dateien sind schreibgeschützt und mit Hash gespeichert.
-- Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Eingangsrechnungen werden storniert, nie gelöscht.
+- Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Der Kassenbestand darf an keinem Tag negativ werden, auch nicht durch rückdatierte Buchungen. Eingangsrechnungen werden storniert, nie gelöscht. Wird dieselbe Rechnung (gleiche Datei oder gleicher Lieferant mit gleicher Rechnungsnummer) ein zweites Mal hochgeladen, fragt Schalk nach.
 - Jede Aktion wird mit dem Windows-Benutzer protokolliert (Verlauf). Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft.
 
 ## Prüfregeln aktuell halten
@@ -103,4 +105,4 @@ Niklas Theiler. Die Version steht in `src/version.py` und unter Einstellungen �
 
 Der Quellcode von Schalk steht unter der [MIT-Lizenz](LICENSE).
 
-Verwendete Bibliotheken haben eigene Lizenzen. Wichtig für die fertige EXE: [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) steht unter der GPLv3, deshalb gelten für die gebündelte Programmdatei auch deren Bedingungen. PySide6/Qt steht unter der LGPLv3, Saxon-HE unter der MPL 2.0, das Raketen-Symbol stammt aus [Lucide](https://lucide.dev) (ISC).
+Verwendete Bibliotheken haben eigene Lizenzen. Wichtig für die fertige EXE: [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) steht unter der GPLv3, deshalb gelten für die gebündelte Programmdatei auch deren Bedingungen. PySide6/Qt steht unter der LGPLv3, Saxon-HE unter der MPL 2.0, das Raketen-Symbol stammt aus [Lucide](https://lucide.dev) (ISC). Die PDF-Schrift [DejaVu Sans](https://dejavu-fonts.github.io) steht unter der Bitstream-Vera-Lizenz (`src/resources/fonts/LICENSE.txt`).

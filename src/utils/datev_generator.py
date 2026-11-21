@@ -6,6 +6,7 @@ import logging
 import os
 import zipfile
 from src.controllers.db_controller import DBController
+from src.utils import paths
 from src.utils.invoice_documents import build_invoice_pdf
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ class DatevGenerator:
 
     def generate_cashbook_export(self, entries: list, filepath: str) -> bool:
         try:
-            files = {f"{e.receipt_number}_{os.path.basename(e.attachment_path)}": e.attachment_path
-                     for e in entries if e.attachment_path and os.path.isfile(e.attachment_path)}
+            attachments = [(e, paths.resolve(e.attachment_path)) for e in entries if e.attachment_path]
+            files = {f"{e.receipt_number}_{os.path.basename(path)}": path for e, path in attachments if os.path.isfile(path)}
             return self._write_zip(filepath, files)
         except Exception:
             logger.exception("DATEV-Export des Kassenbuchs fehlgeschlagen")
@@ -44,8 +45,8 @@ class DatevGenerator:
 
     def generate_incoming_export(self, invoices: list, filepath: str) -> bool:
         try:
-            files = {f"{i.date.strftime('%Y%m%d')}_{os.path.basename(i.file_path)}": i.file_path
-                     for i in invoices if not i.cancelled_at and os.path.isfile(i.file_path)}
+            documents = [(i, paths.resolve(i.file_path)) for i in invoices if not i.cancelled_at]
+            files = {f"{i.date.strftime('%Y%m%d')}_{os.path.basename(path)}": path for i, path in documents if os.path.isfile(path)}
             return self._write_zip(filepath, files)
         except Exception:
             logger.exception("DATEV-Export der Eingangsrechnungen fehlgeschlagen")

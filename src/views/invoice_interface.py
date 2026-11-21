@@ -1,7 +1,6 @@
 import logging
-import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import Action, ComboBox, FluentIcon as FIF, MessageBoxBase, RoundMenu, SubtitleLabel
@@ -10,7 +9,7 @@ from src.utils import paths
 from src.utils.invoice_documents import build_invoice_pdf, export_xrechnung
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, Column, ListPage, confirm, fmt_date,
-                              fmt_money, notify_error, notify_success, show_message)
+                              fmt_money, notify_error, notify_success, open_document, show_message)
 from src.views.invoice_editor import InvoiceEditor
 
 logger = logging.getLogger(__name__)
@@ -160,12 +159,12 @@ class InvoiceInterface(QWidget):
     def open_pdf(self, invoice_id):
         _, path = self._pdf_path(invoice_id)
         if path:
-            os.startfile(path)
+            open_document(self, path)
 
     def print_pdf(self, invoice_id):
         _, path = self._pdf_path(invoice_id)
         if path:
-            os.startfile(path, "print")
+            open_document(self, path, print_document=True)
 
     def save_pdf(self, invoice_id):
         invoice, path = self._pdf_path(invoice_id)
@@ -173,9 +172,14 @@ class InvoiceInterface(QWidget):
             return
         name = "Entwurf" if self.db_controller.is_draft_number(invoice.invoice_number) else invoice.invoice_number
         target, _ = QFileDialog.getSaveFileName(self, "PDF speichern unter", paths.desktop_path(f"Rechnung_{name}.pdf"), "PDF (*.pdf)")
-        if target:
+        if not target:
+            return
+        try:
             shutil.copyfile(path, target)
-            notify_success(self, "PDF gespeichert", target)
+        except OSError as e:
+            notify_error(self, "PDF nicht gespeichert", str(e))
+            return
+        notify_success(self, "PDF gespeichert", target)
 
     def export_xrechnung(self, invoice_id):
         invoice = self.db_controller.get_invoice(invoice_id)
@@ -186,6 +190,9 @@ class InvoiceInterface(QWidget):
             export_xrechnung(self.db_controller, invoice, target)
         except GoBDError as e:
             show_message(self, "XRechnung nicht möglich", str(e))
+            return
+        except OSError as e:
+            notify_error(self, "XRechnung nicht gespeichert", str(e))
             return
         self.db_controller.log_actions("Invoice", [invoice_id], "XRechnung exportiert")
         notify_success(self, "XRechnung exportiert", target)
@@ -236,7 +243,9 @@ class InvoiceInterface(QWidget):
 
     def show_history(self, invoice_id):
         entries = self.db_controller.get_document_history("Invoice", invoice_id)
-        lines = [f"{h.timestamp.strftime('%d.%m.%Y %H:%M')} UTC – {h.user}: {h.action}" for h in entries]
+        # Stored in UTC, shown in the local time of this computer
+        lines = [f"{h.timestamp.replace(tzinfo=timezone.utc).astimezone().strftime('%d.%m.%Y %H:%M')} – {h.user}: {h.action}"
+                 for h in entries]
         show_message(self, "Verlauf", "\n".join(lines) or "Kein Verlauf vorhanden.")
 
     def show_datev_export_dialog(self):

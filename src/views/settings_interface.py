@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import sys
+import threading
 from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
@@ -44,6 +45,7 @@ BANK_FIELDS = [
 class SettingsInterface(QWidget):
     integrityChecked = Signal(list)
     updateCheckRequested = Signal()
+    backupFinished = Signal(str, str) # path, error message ("" = success)
 
     def __init__(self, db_controller: DBController, parent=None):
         super().__init__(parent=parent)
@@ -53,6 +55,7 @@ class SettingsInterface(QWidget):
         self._dirty = True
         SignalBus.get().settingsChanged.connect(self._mark_dirty)
         self.integrityChecked.connect(self._show_integrity_result)
+        self.backupFinished.connect(self._on_backup_finished)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -137,12 +140,12 @@ class SettingsInterface(QWidget):
         layout.addWidget(text)
         layout.addSpacing(16)
         buttons = QHBoxLayout()
-        export_btn = PrimaryPushButton("Backup erstellen (Export)")
-        export_btn.clicked.connect(self.export_backup)
-        import_btn = PushButton("Backup einspielen (Import)")
-        import_btn.clicked.connect(self.import_backup)
-        buttons.addWidget(export_btn)
-        buttons.addWidget(import_btn)
+        self.exportBtn = PrimaryPushButton("Backup erstellen (Export)")
+        self.exportBtn.clicked.connect(self.export_backup)
+        self.importBtn = PushButton("Backup einspielen (Import)")
+        self.importBtn.clicked.connect(self.import_backup)
+        buttons.addWidget(self.exportBtn)
+        buttons.addWidget(self.importBtn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
@@ -195,7 +198,7 @@ class SettingsInterface(QWidget):
         self._dirty = False
         for key, edit in self.edits.items():
             edit.setText(self.db_controller.get_setting(key))
-        self.logoPathEdit.setText(self.db_controller.get_setting("logo_path"))
+        self.logoPathEdit.setText(paths.resolve(self.db_controller.get_setting("logo_path")))
         self.smallBusinessCheck.setChecked(self.db_controller.is_small_business())
         self.paymentTermsSpin.setValue(self.db_controller.get_payment_terms())
 
@@ -219,7 +222,8 @@ class SettingsInterface(QWidget):
             return
 
         logo_path = self.logoPathEdit.text()
-        if logo_path and os.path.isfile(logo_path) and not os.path.abspath(logo_path).startswith(paths.ASSETS_DIR):
+        in_assets = os.path.normcase(os.path.abspath(logo_path)).startswith(os.path.normcase(os.path.abspath(paths.ASSETS_DIR)) + os.sep)
+        if logo_path and os.path.isfile(logo_path) and not in_assets:
             # Copy into the data folder so the logo stays available
             os.makedirs(paths.ASSETS_DIR, exist_ok=True)
             new_path = os.path.join(paths.ASSETS_DIR, f"logo{os.path.splitext(logo_path)[1].lower()}")
@@ -272,16 +276,33 @@ class SettingsInterface(QWidget):
         dialog = BackupPasswordDialog("create", parent=self.window())
         if not dialog.exec():
             return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            create_backup(self.db_controller.db, path, dialog.password(), self._backup_folders())
-        except Exception as e:
-            logger.exception("Backup fehlgeschlagen")
-            notify_error(self, "Fehler beim Export", str(e))
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-        notify_success(self, "Backup erstellt", path, duration=5000)
+        # The state of this moment; encrypting and packing all documents runs in the background
+        snapshot, password, folders = self.db_controller.db.snapshot(), dialog.password(), self._backup_folders()
+        self.exportBtn.setEnabled(False)
+        self.exportBtn.setText("Backup wird erstellt...")
+
+        def run():
+            error = ""
+            try:
+                create_backup(snapshot, path, password, folders)
+            except Exception as e:
+                logger.exception("Backup fehlgeschlagen")
+                error = str(e) or type(e).__name__
+            try:
+                self.backupFinished.emit(path, error)
+            except RuntimeError:
+                pass # window already closed; the backup itself is complete
+
+        # Not a daemon: when Schalk is closed meanwhile, the backup is still finished
+        threading.Thread(target=run, name="schalk-backup").start()
+
+    def _on_backup_finished(self, path: str, error: str):
+        self.exportBtn.setEnabled(True)
+        self.exportBtn.setText("Backup erstellen (Export)")
+        if error:
+            notify_error(self, "Fehler beim Export", error)
+        else:
+            notify_success(self, "Backup erstellt", path, duration=5000)
 
     def import_backup(self):
         path, _ = QFileDialog.getOpenFileName(self, "Backup auswählen", paths.downloads_dir(), BACKUP_FILTER)

@@ -12,7 +12,7 @@ from src.utils import paths
 from src.utils.archive import is_pdf
 from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
 from src.views.invoice_interface import RIGHT, add_action
 
@@ -49,6 +49,11 @@ class IncomingInvoiceDialog(MessageBoxBase):
             info = BodyLabel(f"E-Rechnung erkannt ({einvoice.format}): Die Daten wurden aus den strukturierten Rechnungsdaten übernommen.", self)
             info.setWordWrap(True)
             self.viewLayout.addWidget(info)
+            if einvoice.currency != "EUR":
+                warning = BodyLabel(f"Achtung: Die Rechnung lautet auf {einvoice.currency}. Bitte den Betrag in Euro eintragen.", self)
+                warning.setWordWrap(True)
+                warning.setStyleSheet("color: #C42B1C;")
+                self.viewLayout.addWidget(warning)
         self.supplierEdit = self._field("Lieferant", LineEdit(self), einvoice.seller_name if einvoice else "")
         self.numberEdit = self._field("Rechnungsnummer", LineEdit(self), einvoice.number if einvoice else "")
         self.descEdit = self._field("Beschreibung", LineEdit(self), description)
@@ -93,7 +98,7 @@ class EInvoiceViewer(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         original = PushButton("Originaldatei öffnen", self)
-        original.clicked.connect(lambda: os.startfile(original_path))
+        original.clicked.connect(lambda: open_document(self, original_path))
         close = PushButton("Schließen", self)
         close.clicked.connect(self.accept)
         buttons.addWidget(original)
@@ -134,17 +139,20 @@ class IncomingInvoiceInterface(ListPage):
             add_action(menu, FIF.CANCEL, "Stornieren", lambda: self.cancel(invoice.id))
 
     def open_file(self, path):
-        if os.path.isfile(path):
-            os.startfile(path)
-        else:
-            notify_error(self, "Fehler", "Datei nicht gefunden.")
+        open_document(self, paths.resolve(path))
 
     def open_invoice(self, invoice):
-        data = read_einvoice(invoice.file_path) if invoice.einvoice_format and os.path.isfile(invoice.file_path) else None
+        path = paths.resolve(invoice.file_path)
+        data = None
+        if invoice.einvoice_format and os.path.isfile(path):
+            try:
+                data = read_einvoice(path)
+            except Exception:
+                logger.exception("E-Rechnung %s konnte nicht gelesen werden", path)
         if data:
-            EInvoiceViewer(data, invoice.file_path, self.window()).exec()
+            EInvoiceViewer(data, path, self.window()).exec()
         else:
-            self.open_file(invoice.file_path)
+            self.open_file(path)
 
     def cancel(self, invoice_id):
         if confirm(self, "Rechnung stornieren",
@@ -182,17 +190,29 @@ class IncomingInvoiceInterface(ListPage):
             if not dialog.exec():
                 continue
             data = dialog.get_data()
-            # The controller archives the file read-only and stores its hash (GoBD)
-            self.db_controller.add_incoming_invoice(
-                invoice_type=self.invoice_type,
-                date=data["date"],
-                amount=data["amount"],
-                description=data["description"] or os.path.basename(filepath),
-                source_path=filepath,
-                einvoice_format=einvoice.format if einvoice else None,
-                invoice_number=data["invoice_number"],
-                supplier_name=data["supplier_name"],
-            )
+            # The same invoice entered twice would be booked twice
+            duplicate = self.db_controller.find_duplicate_incoming(filepath, data["supplier_name"], data["invoice_number"])
+            if duplicate and not confirm(
+                    self, "Rechnung bereits erfasst",
+                    f"{os.path.basename(filepath)} ist bereits als „{duplicate.description}“ vom "
+                    f"{fmt_date(duplicate.date)} gespeichert.\n\nTrotzdem noch einmal speichern?"):
+                continue
+            try:
+                # The controller archives the file read-only and stores its hash (GoBD)
+                self.db_controller.add_incoming_invoice(
+                    invoice_type=self.invoice_type,
+                    date=data["date"],
+                    amount=data["amount"],
+                    description=data["description"] or os.path.basename(filepath),
+                    source_path=filepath,
+                    einvoice_format=einvoice.format if einvoice else None,
+                    invoice_number=data["invoice_number"],
+                    supplier_name=data["supplier_name"],
+                )
+            except (OSError, ValueError) as e:
+                logger.exception("Eingangsrechnung %s konnte nicht gespeichert werden", filepath)
+                notify_error(self, "Nicht gespeichert", f"{os.path.basename(filepath)}: {e}")
+                continue
             imported += 1
         if imported:
             notify_success(self, "Erfolg", f"{imported} Eingangsrechnung(en) gespeichert.")

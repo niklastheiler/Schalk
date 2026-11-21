@@ -69,3 +69,40 @@ def test_cashbook_ui_edit_and_finalize(window, controller, qapp, monkeypatch):
     qapp.processEvents()
     assert controller.get_cashbook_entry(entry.id).receipt_number
     assert not cb.finalizeBtn.isEnabled()
+
+
+def test_cash_balance_never_negative_on_any_day(controller):
+    # GoBD: the till can never hold less than nothing, also not on a day before a later income
+    c = controller
+    income = c.add_cashbook_entry(datetime(2026, 10, 10), 100, "Einlage", "A", "Einnahme", 19)
+    with pytest.raises(ValueError, match="am 09.10.2026"):
+        c.add_cashbook_entry(datetime(2026, 10, 9), 50, "Rückdatiert", "A", "Barentnahme Firma", 19)
+    withdrawal = c.add_cashbook_entry(datetime(2026, 10, 11), 50, "Porto", "A", "Barentnahme Firma", 19)
+    # Moving the withdrawal before the income or removing the income would leave the till negative
+    with pytest.raises(ValueError, match="negativ"):
+        c.update_cashbook_entry(withdrawal, datetime(2026, 10, 9), 50, "Porto", "Barentnahme Firma")
+    with pytest.raises(ValueError, match="negativ"):
+        c.delete_cashbook_entry(income)
+    with pytest.raises(ValueError, match="negativ"):
+        c.update_cashbook_entry(income, datetime(2026, 10, 10), 40, "Einlage", "Einnahme")
+    c.update_cashbook_entry(income, datetime(2026, 10, 10), 80, "Einlage", "Einnahme")
+    assert c.get_cashbook_balance() == 30
+
+
+def test_clock_set_back_does_not_break_the_cashbook_chain(controller, monkeypatch):
+    from datetime import timedelta
+    from src.controllers import db_controller
+    c = controller
+    first = c.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19)
+    c.finalize_cashbook()
+
+    class EarlierClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) - timedelta(hours=1) # end of daylight saving time
+    monkeypatch.setattr(db_controller, "datetime", EarlierClock)
+    second = c.add_cashbook_entry(datetime(2026, 10, 2), 10, "Einnahme", "A", "Einnahme", 19)
+    c.finalize_cashbook()
+    c.storno_cashbook_entry(second)
+    assert c.get_cashbook_entry(second).finalized_at > c.get_cashbook_entry(first).finalized_at
+    assert c.verify_integrity() == []

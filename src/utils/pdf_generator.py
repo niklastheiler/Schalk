@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape
 import reportlab
 import reportlab.rl_config
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
@@ -15,23 +16,27 @@ from reportlab.lib.fonts import addMapping
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from src.controllers.db_controller import DBController
 from src.models.database import Invoice
+from src.utils import paths
 from src.utils.calculations import tax_breakdown
 from src.utils.tax import format_rate
+from src.utils.text import fmt_money, fmt_number, fmt_price, payment_terms_text
 
-FONT = "Vera"
-FONT_BOLD = "Vera-Bold"
+FONT = "DejaVuSans"
+FONT_BOLD = "DejaVuSans-Bold"
+FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "fonts")
 
 
 @lru_cache(maxsize=1)
 def _register_fonts():
-    # PDF/A requires embedded fonts; the standard 14 PDF fonts (Helvetica, ...) are not embedded
-    font_dir = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
-    for name, filename in ((FONT, "Vera.ttf"), (FONT_BOLD, "VeraBd.ttf"), ("Vera-Italic", "VeraIt.ttf"), ("Vera-BoldItalic", "VeraBI.ttf")):
-        pdfmetrics.registerFont(TTFont(name, os.path.join(font_dir, filename)))
+    # PDF/A requires embedded fonts; the standard 14 PDF fonts (Helvetica, ...) are not embedded.
+    # DejaVu Sans looks like Bitstream Vera but also has the letters of names such as Łódź, Dvořák or Wiśniewski.
+    for name in (FONT, FONT_BOLD):
+        pdfmetrics.registerFont(TTFont(name, os.path.join(FONT_DIR, f"{name}.ttf")))
+    # Documents use no italics; <i> falls back to the upright font
     addMapping(FONT, 0, 0, FONT)
     addMapping(FONT, 1, 0, FONT_BOLD)
-    addMapping(FONT, 0, 1, "Vera-Italic")
-    addMapping(FONT, 1, 1, "Vera-BoldItalic")
+    addMapping(FONT, 0, 1, FONT)
+    addMapping(FONT, 1, 1, FONT_BOLD)
     # The canvas starts with this font; it must be embedded as well
     reportlab.rl_config.canvas_basefontname = FONT
 
@@ -44,22 +49,13 @@ def _styles():
         style.fontName = FONT_BOLD if "Heading" in style.name or style.name == "Title" else FONT
     styles.add(ParagraphStyle(name='Small', parent=styles['Normal'], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name='Cell', parent=styles['Normal'], fontSize=9, leading=11))
+    styles.add(ParagraphStyle(name='CellCenter', parent=styles['Cell'], alignment=TA_CENTER))
     return styles
 
 
 def _markup(text) -> str:
     """User data for a reportlab Paragraph: escaped (it is parsed as markup), line breaks kept."""
     return escape(str(text or "")).replace("\r\n", "\n").replace("\n", "<br/>")
-
-
-def fmt_money(value: float) -> str:
-    # German format: 1.234,56 €
-    return f"{value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def fmt_number(value: float) -> str:
-    text = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return text[:-3] if text.endswith(",00") else text
 
 
 class PDFGenerator:
@@ -93,7 +89,7 @@ class PDFGenerator:
         if tax_ids:
             header.append(self._p(" | ".join(tax_ids), 'Small'))
 
-        logo_path = self.db_controller.get_setting("logo_path")
+        logo_path = paths.resolve(self.db_controller.get_setting("logo_path"))
         if logo_path and os.path.isfile(logo_path):
             logo = Image(logo_path)
             logo._restrictSize(50 * mm, 25 * mm)
@@ -144,8 +140,9 @@ class PDFGenerator:
             data.append([
                 str(i),
                 Paragraph(title, self.styles['Cell']),
-                f"{fmt_number(item.quantity)} {item.unit}",
-                fmt_money(item.unit_price),
+                # A paragraph, so long unit names wrap instead of running into the next column
+                Paragraph(_markup(f"{fmt_number(item.quantity)} {item.unit}"), self.styles['CellCenter']),
+                fmt_price(item.unit_price),
                 format_rate(item.tax_percent),
                 fmt_money(item.total_price)
             ])
@@ -221,8 +218,9 @@ class PDFGenerator:
         else:
             due = self.db_controller.get_due_date(invoice)
             terms = self.db_controller.payment_terms_of(invoice)
-            elements.append(self._p(f"Bitte überweisen Sie den Betrag innerhalb von {terms} Tagen ohne Abzug bis zum "
-                                    f"{due.strftime('%d.%m.%Y')} unter Angabe der Rechnungsnummer."))
+            deadline = f" bis zum {due.strftime('%d.%m.%Y')}" if terms > 0 else ""
+            elements.append(self._p(f"Bitte überweisen Sie den Betrag {payment_terms_text(terms)} ohne Abzug{deadline} "
+                                    "unter Angabe der Rechnungsnummer."))
 
         self._bank_info(elements, seller)
         doc.build(elements)

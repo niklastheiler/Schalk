@@ -1,10 +1,37 @@
+import re
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
+from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController
 from src.utils.signal_bus import SignalBus
 from src.views.common import Column, ListPage, confirm, make_scrollable, notify_error, notify_success
 from src.views.invoice_interface import add_action
+
+
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+def customer_problems(values: dict) -> list:
+    """Checks the fields an e-invoice validator would reject; values are changed to their normalized form."""
+    problems = []
+    values["country"] = (values.get("country") or "DE").upper()
+    if len(values["country"]) != 2 or not values["country"].isalpha():
+        problems.append("Bitte das Land als zweistelligen ISO-Code angeben, z. B. DE, AT, FR.")
+    vat_id = (values.get("vat_id") or "").strip()
+    if vat_id:
+        # EN 16931 (BR-CO-09): a VAT ID starts with the country code; EU numbers also have a check digit
+        prefix = vat_id[:2].upper()
+        if not prefix.isalpha():
+            problems.append("Die USt-IdNr. muss mit dem Ländercode beginnen, z. B. DE123456789.")
+        elif prefix.lower() in stdnum_vat.MEMBER_STATES or prefix == "EL":
+            vat_id = vat_id.replace(" ", "").upper()
+            if not stdnum_vat.is_valid(vat_id):
+                problems.append("Die USt-IdNr. ist ungültig (Format/Prüfziffer).")
+        values["vat_id"] = vat_id
+    if values.get("email") and not _EMAIL_RE.fullmatch(values["email"]):
+        problems.append("Die E-Mail-Adresse ist ungültig.")
+    return problems
 
 
 class CustomerEditor(QWidget):
@@ -82,9 +109,9 @@ class CustomerEditor(QWidget):
         if not values["company_name"] and not (values["first_name"] or values["last_name"]):
             notify_error(self, "Fehler", "Bitte geben Sie entweder eine Firma oder einen Namen an.")
             return
-        values["country"] = (values["country"] or "DE").upper()
-        if len(values["country"]) != 2 or not values["country"].isalpha():
-            notify_error(self, "Fehler", "Bitte das Land als zweistelligen ISO-Code angeben, z. B. DE, AT, FR.")
+        problems = customer_problems(values)
+        if problems:
+            notify_error(self, "Bitte prüfen", "\n".join(problems))
             return
         if self.current_customer_id:
             self.db_controller.update_customer(self.current_customer_id, **values)

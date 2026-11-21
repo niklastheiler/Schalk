@@ -101,3 +101,75 @@ def test_reminders_cashbook_customers(window, controller, qapp):
     window.switchTo(window.analysis_interface)
     window.switchTo(window.settings_interface)
     qapp.processEvents()
+
+
+def test_german_thousands_separator_in_prices(window, qapp):
+    # "1.500" is one thousand five hundred in German, not 1,50 €
+    ii = window.invoice_interface
+    window.switchTo(ii)
+    ii.show_editor()
+    ed = ii.editor
+    ed.add_item_row()
+    ed.table.cellWidget(0, 0).setText("Maschine")
+    ed.table.cellWidget(0, 3).setText("1.500")
+    assert ed.collect_items()[0]["unit_price"] == 1500.0 and "1.785,00" in ed.grossTotalLabel.text()
+    ed.table.cellWidget(0, 3).setText("12,5")
+    assert ed.collect_items()[0]["unit_price"] == 12.5
+
+
+def test_documents_open_safely(window, tmp_path, monkeypatch):
+    import os
+    from src.views.common import open_document
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    script = tmp_path / "rechnung.bat"
+    script.write_bytes(b"%PDF-1.4\r\ncalc")
+    assert not open_document(window, str(script)) and not open_document(window, str(tmp_path / "fehlt.pdf"))
+    assert window.opened == []
+
+    # Microsoft Edge as PDF viewer has no "print" command: the PDF is opened for printing instead
+    calls = []
+
+    def startfile(path, operation=None):
+        calls.append(operation)
+        if operation == "print":
+            raise OSError(1155, "Keine Anwendung zugeordnet")
+    monkeypatch.setattr(os, "startfile", startfile, raising=False)
+    assert open_document(window, str(pdf), print_document=True) and calls == ["print", None]
+
+    def no_viewer(path, operation=None):
+        raise OSError(1155, "Keine Anwendung zugeordnet")
+    monkeypatch.setattr(os, "startfile", no_viewer, raising=False)
+    assert not open_document(window, str(pdf)) # reported to the user, no crash
+
+
+def test_customer_data_is_checked(window, controller, qapp):
+    ci = window.customer_interface
+    window.switchTo(ci)
+    ci.show_editor()
+    ed = ci.editor
+    ed.edits["company_name"].setText("Client SARL")
+    ed.edits["vat_id"].setText("FR 123")
+    ed.save_customer()
+    assert controller.get_customers() == []
+    ed.edits["vat_id"].setText("fr40303265045")
+    ed.edits["email"].setText("keine-adresse")
+    ed.save_customer()
+    assert controller.get_customers() == []
+    ed.edits["email"].setText("compta@client.fr")
+    ed.save_customer()
+    assert [(c.vat_id, c.email) for c in controller.get_customers()] == [("FR40303265045", "compta@client.fr")]
+
+
+def test_backup_is_created_in_the_background(window, controller, qapp, data_dir):
+    import time
+    si = window.settings_interface
+    window.switchTo(si)
+    si.export_backup()
+    # The password dialog is auto-confirmed; packing runs on a worker thread and reports back
+    deadline = time.monotonic() + 30
+    while not si.exportBtn.isEnabled() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.02)
+    target = next(data_dir.glob("Schalk_Backup_*.backup"), None)
+    assert si.exportBtn.isEnabled() and target is not None and target.stat().st_size > 0

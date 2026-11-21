@@ -1,4 +1,6 @@
 import os
+import stat
+import struct
 import zipfile
 import pytest
 from src.models.database import WrongPasswordError
@@ -22,7 +24,7 @@ def test_single_backup_file_with_documents(controller, tmp_path, monkeypatch):
     controller.add_customer(company_name="Im Backup")
 
     path = tmp_path / "Schalk.backup"
-    create_backup(controller.db, str(path), "geheim123", _folders(source))
+    create_backup(controller.db.snapshot(), str(path), "geheim123", _folders(source))
     data = path.read_bytes()
     assert data.startswith(backup.MAGIC) and not zipfile.is_zipfile(path)
     assert b"Im Backup" not in data and not os.path.exists(f"{path}.tmp")
@@ -35,7 +37,10 @@ def test_single_backup_file_with_documents(controller, tmp_path, monkeypatch):
     assert not (target / "app_data").exists()
 
     restore_backup(controller.db, str(path), "geheim123", _folders(target))
-    assert (target / "app_data" / "archive" / "R-1.pdf").read_bytes() == big
+    restored = target / "app_data" / "archive" / "R-1.pdf"
+    assert restored.read_bytes() == big
+    # Restored documents are archived documents again: read-only
+    assert not os.stat(restored).st_mode & stat.S_IWRITE
     # Existing (read-only archived) files are never overwritten
     assert (target / "assets" / "logo.png").read_bytes() == b"vorhanden"
 
@@ -43,23 +48,46 @@ def test_single_backup_file_with_documents(controller, tmp_path, monkeypatch):
 def test_damaged_or_foreign_backup_is_rejected(controller, tmp_path, monkeypatch):
     monkeypatch.setattr(backup, "CHUNK_SIZE", 1024)
     path = tmp_path / "b.backup"
-    create_backup(controller.db, str(path), "geheim123", {})
+    create_backup(controller.db.snapshot(), str(path), "geheim123", {})
     data = path.read_bytes()
 
-    truncated = tmp_path / "truncated.backup"
-    truncated.write_bytes(data[:-(1024 + backup.TAG_SIZE)])
-    with pytest.raises(ValueError, match="beschädigt"):
-        restore_backup(controller.db, str(truncated), "geheim123", {})
-
-    flipped = bytearray(data)
-    flipped[-5] ^= 1
-    (tmp_path / "flipped.backup").write_bytes(bytes(flipped))
-    with pytest.raises(ValueError, match="beschädigt"):
-        restore_backup(controller.db, str(tmp_path / "flipped.backup"), "geheim123", {})
+    # A damaged or cut-off file is reported as such, also when the first chunk is affected,
+    # and never as a wrong password
+    header = backup.HEADER_SIZE + backup.CHECK_SIZE
+    for name, damaged in (("truncated", data[:-(1024 + backup.TAG_SIZE)]), ("first_chunk_only", data[:header + 100]),
+                          ("flipped_end", data[:-5] + bytes([data[-5] ^ 1]) + data[-4:]),
+                          ("flipped_start", data[:header + 3] + bytes([data[header + 3] ^ 1]) + data[header + 4:])):
+        (tmp_path / f"{name}.backup").write_bytes(damaged)
+        with pytest.raises(ValueError, match="beschädigt"):
+            restore_backup(controller.db, str(tmp_path / f"{name}.backup"), "geheim123", {})
+    with pytest.raises(WrongPasswordError):
+        restore_backup(controller.db, str(path), "falsch", {})
 
     (tmp_path / "x.backup").write_bytes(b"PK\x03\x04 kein Backup")
     with pytest.raises(ValueError, match="kein gültiges"):
         restore_backup(controller.db, str(tmp_path / "x.backup"), "geheim123", {})
+
+
+def _create_version_1(snapshot: bytes, path, password: str):
+    """A backup as Schalk up to 1.2.3 wrote it (no password check in the header)."""
+    header = backup.MAGIC_V1 + struct.pack(">I", 1000) + os.urandom(backup.SALT_SIZE) + os.urandom(backup.PREFIX_SIZE)
+    aead = backup._derive_key(password, header[len(backup.MAGIC_V1) + 4:len(backup.MAGIC_V1) + 4 + backup.SALT_SIZE], 1000)
+    with open(path, "wb") as f:
+        f.write(header)
+        writer = backup._EncryptingWriter(f, aead, header, header[-backup.PREFIX_SIZE:])
+        with zipfile.ZipFile(writer, "w") as zipf:
+            zipf.writestr(backup.DB_NAME, snapshot)
+        writer.finish()
+
+
+def test_backups_of_older_versions_are_still_restored(controller, tmp_path):
+    controller.add_customer(company_name="Aus Version 1")
+    path = tmp_path / "alt.backup"
+    _create_version_1(controller.db.snapshot(), path, "geheim123")
+    with pytest.raises(WrongPasswordError):
+        restore_backup(controller.db, str(path), "falsch", {})
+    restore_backup(controller.db, str(path), "geheim123", {})
+    assert controller.db._restored
 
 
 def test_paths_outside_the_folder_are_ignored(tmp_path):

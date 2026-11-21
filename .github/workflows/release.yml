@@ -42,12 +42,23 @@ jobs:
         shell: cmd
         run: build.bat
 
+      - name: EXE-Selbsttest
+        shell: pwsh
+        run: |
+          # The built program creates, checks and exports an invoice in a temporary data folder. This finds files
+          # PyInstaller did not bundle (like the currency table missing in 1.2) before the release goes out.
+          $p = Start-Process dist\Schalk\Schalk.exe -ArgumentList "--selbsttest" -Wait -PassThru
+          $report = Join-Path $env:TEMP "schalk_selbsttest.log"
+          if (Test-Path $report) { Get-Content $report -Encoding utf8 }
+          if ($p.ExitCode -ne 0) { throw "Selbsttest der EXE fehlgeschlagen (Exitcode $($p.ExitCode))" }
+
       - name: Prüfregeln kontrollieren und Release-Text erstellen
         shell: pwsh
         run: |
-          # The official validation rules must be part of the EXE, otherwise the XRechnung export fails
-          foreach ($rules in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt") {
-            if (-not (Test-Path "dist/Schalk/_internal/src/resources/$rules")) { throw "Prüfregeln fehlen in der EXE: $rules" }
+          # The official validation rules (XRechnung export) and the PDF fonts must be part of the EXE
+          foreach ($resource in "en16931/EN16931-CII-validation.xslt", "xrechnung/XRechnung-CII-validation.xslt",
+                                "fonts/DejaVuSans.ttf", "fonts/DejaVuSans-Bold.ttf") {
+            if (-not (Test-Path "dist/Schalk/_internal/src/resources/$resource")) { throw "Datei fehlt in der EXE: $resource" }
           }
           # Data files of libraries that are read at runtime (a missing one crashes Schalk on start)
           foreach ($data in "iso4217/table.xml") {

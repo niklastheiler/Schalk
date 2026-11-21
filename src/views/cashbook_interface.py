@@ -7,7 +7,7 @@ from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDErro
 from src.utils import paths
 from src.utils.archive import is_pdf
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success
+from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
 from src.views.invoice_interface import RIGHT, MonthDialog, add_action
@@ -113,10 +113,7 @@ class CashbookInterface(ListPage):
             add_action(menu, FIF.CANCEL, "Stornieren (Gegenbuchung)", lambda: self.storno_entry(entry.id))
 
     def open_attachment(self, path):
-        if os.path.isfile(path):
-            os.startfile(path)
-        else:
-            notify_error(self, "Fehler", "Beleg-Datei nicht gefunden.")
+        open_document(self, paths.resolve(path))
 
     def attach_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "PDF-Dokumente (*.pdf)")
@@ -143,7 +140,7 @@ class CashbookInterface(ListPage):
                 self.db_controller.add_cashbook_entry(category="Allgemein", tax_percent=19.0, **fields)
             else:
                 self.db_controller.update_cashbook_entry(self.editing_id, **fields)
-        except (GoBDError, ValueError) as e:
+        except (GoBDError, ValueError, OSError) as e:
             notify_error(self, "Fehler", str(e))
             return
         notify_success(self, "Gespeichert", "Der Eintrag ist bis zum Festschreiben änderbar.")

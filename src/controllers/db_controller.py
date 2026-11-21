@@ -2,19 +2,23 @@ import getpass
 import hashlib
 import json
 import logging
+import math
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Callable, Dict, Iterable, List, Optional
-from sqlalchemy import create_engine, select
+from collections import defaultdict
+from datetime import date, datetime, timezone, timedelta
+from decimal import Decimal
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, selectinload
 from src.models.database import DatabaseManager, Setting, Customer, Invoice, InvoiceItem, Quote, QuoteItem, CashbookEntry, DocumentHistory, IncomingInvoice
 from src.utils.signal_bus import SignalBus
 from src.utils.calculations import calculate_totals, item_total
+from src.utils.text import fmt_money
 from src.utils.tax import TAX_RATE_OPTIONS, has_zero_rate, vat_category, EXEMPTION_REQUIRED_MESSAGE
-from src.utils.archive import archive_file, is_pdf, verify_file
+from src.utils.archive import archive_file, file_sha256, is_pdf, verify_file
 from src.utils import paths
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,8 @@ INVOICE_TRANSITIONS = {
 QUOTE_STATUSES = ["Entwurf", "Versendet", "Angenommen", "Abgelehnt", "Abgelaufen"]
 CASHBOOK_TYPES = ["Einnahme", "Barentnahme Privat", "Barentnahme Firma"]
 CASHBOOK_INCOME_TYPES = ["Einnahme"]
+# Statuses in which an invoice is still (partly) unpaid
+UNPAID_STATUSES = ("Offen", "Teilbezahlt", "Überfällig")
 DEFAULT_PAYMENT_TERMS = 14
 NO_ITEMS_MESSAGE = "Rechnungen und Angebote benötigen mindestens eine Position mit Bezeichnung."
 
@@ -65,6 +71,18 @@ def _iso(dt) -> Optional[str]:
 
 def _naive(dt: datetime) -> datetime:
     return dt.replace(tzinfo=None) if dt else dt
+
+
+def _seal_time(session: Session, column, now: datetime) -> datetime:
+    """
+    Time stamp for sealing a record into a hash chain. The chain is verified in the order of these time stamps,
+    so a new one is never earlier than the last: a clock set back (time synchronisation, end of daylight saving
+    time) would otherwise swap the order and the integrity check would report untouched records as altered.
+    """
+    last = session.query(func.max(column)).scalar()
+    if last is not None and _naive(now) <= _naive(last):
+        return (_naive(last) + timedelta(microseconds=1)).replace(tzinfo=now.tzinfo)
+    return now
 
 
 class _EntityCache:
@@ -242,6 +260,29 @@ class DBController:
     def get_cashbook_balance(self) -> float:
         return round(sum(self.cashbook_signed_amount(e) for e in self._caches["cashbook"].by_id.values()), 2)
 
+    def _check_cash_balance(self, remove: CashbookEntry = None, add: Tuple[date, float] = None):
+        """
+        GoBD: there can never be less than nothing in the till, so the balance at the end of every day must not
+        become negative, also when an entry is dated back. Only days the change makes worse are checked, so an
+        old inconsistency doesn't block unrelated entries.
+        """
+        before = defaultdict(Decimal)
+        for entry in self._caches["cashbook"].by_id.values():
+            before[_naive(entry.entry_date).date()] += Decimal(str(self.cashbook_signed_amount(entry)))
+        after = defaultdict(Decimal, before)
+        if remove is not None:
+            after[_naive(remove.entry_date).date()] -= Decimal(str(self.cashbook_signed_amount(remove)))
+        if add is not None:
+            day, signed = add
+            after[day] += Decimal(str(signed))
+        balance_before = balance_after = Decimal(0)
+        for day in sorted(after):
+            balance_before += before.get(day, Decimal(0))
+            balance_after += after[day]
+            if balance_after < 0 and balance_after < balance_before:
+                raise ValueError(f"Der Kassenbestand darf nicht negativ werden: am {day:%d.%m.%Y} wären es "
+                                 f"{fmt_money(float(balance_after))}.")
+
     @staticmethod
     def _cashbook_hash_payload(entry: CashbookEntry) -> str:
         return "|".join(str(v) for v in [
@@ -278,14 +319,13 @@ class DBController:
         """Creates a draft entry; it stays editable until the cashbook is finalized."""
         self._check_cashbook_input(amount, entry_type)
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
-        if self.get_cashbook_balance() + signed < 0:
-            raise ValueError("Der Kassenbestand darf nicht negativ werden!")
+        self._check_cash_balance(add=(_naive(entry_date).date(), signed))
 
         attachment_path, attachment_hash = None, None
         if attachment_source and not is_pdf(attachment_source):
             raise ValueError("Als Beleg sind nur PDF-Dateien erlaubt.")
         if attachment_source:
-            attachment_path, attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR)
+            attachment_path, attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR, extension=".pdf")
 
         with self.get_session() as session:
             entry = CashbookEntry(
@@ -311,14 +351,15 @@ class DBController:
         current = self.get_cashbook_entry(entry_id)
         if current is None:
             raise GoBDError("Eintrag nicht gefunden.")
+        if attachment_source and not is_pdf(attachment_source):
+            raise ValueError("Als Beleg sind nur PDF-Dateien erlaubt.")
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
-        if self.get_cashbook_balance() - self.cashbook_signed_amount(current) + signed < 0:
-            raise ValueError("Der Kassenbestand darf nicht negativ werden!")
+        self._check_cash_balance(remove=current, add=(_naive(entry_date).date(), signed))
 
         with self.get_session() as session:
             entry = self._draft(session, entry_id)
             if attachment_source:
-                entry.attachment_path, entry.attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR)
+                entry.attachment_path, entry.attachment_hash = archive_file(attachment_source, paths.RECEIPTS_DIR, extension=".pdf")
             entry.entry_date = entry_date
             entry.amount = amount
             entry.description = description or "Keine Angabe"
@@ -329,8 +370,8 @@ class DBController:
     def delete_cashbook_entry(self, entry_id: int, user: str = None):
         """Only drafts can be deleted; finalized entries are corrected by a reversing entry."""
         current = self.get_cashbook_entry(entry_id)
-        if current is not None and self.get_cashbook_balance() - self.cashbook_signed_amount(current) < 0:
-            raise ValueError("Durch das Löschen würde der Kassenbestand negativ werden!")
+        if current is not None and not current.finalized_at:
+            self._check_cash_balance(remove=current)
         with self.get_session() as session:
             session.delete(self._draft(session, entry_id))
             self._log(session, "Cashbook", entry_id, "Deleted (Entwurf)", user)
@@ -346,7 +387,7 @@ class DBController:
                       .order_by(CashbookEntry.entry_date, CashbookEntry.id).all())
             if not drafts:
                 return 0
-            now = datetime.now()
+            now = _seal_time(session, CashbookEntry.finalized_at, datetime.now())
             for entry in drafts:
                 self._seal_cashbook_entry(session, entry, now)
                 self._log(session, "Cashbook", entry.id, f"Festgeschrieben als {entry.receipt_number}", user)
@@ -366,11 +407,11 @@ class DBController:
                 raise GoBDError("Eine Storno-Buchung kann nicht erneut storniert werden.")
             if session.query(CashbookEntry).filter(CashbookEntry.storno_of_id == entry_id).count():
                 raise GoBDError("Dieser Eintrag wurde bereits storniert.")
-            if self.get_cashbook_balance() - self.cashbook_signed_amount(original) < 0:
-                raise ValueError("Durch die Stornierung würde der Kassenbestand negativ werden!")
+            today = datetime.now().date()
+            self._check_cash_balance(add=(today, -self.cashbook_signed_amount(original)))
 
             entry = CashbookEntry(
-                entry_date=datetime.combine(datetime.now().date(), datetime.min.time()),
+                entry_date=datetime.combine(today, datetime.min.time()),
                 amount=-original.amount,
                 description=f"Storno zu {original.receipt_number}",
                 category=original.category,
@@ -382,7 +423,7 @@ class DBController:
             session.add(entry)
             session.flush()
             # The reversing entry corrects sealed data and is therefore sealed immediately
-            self._seal_cashbook_entry(session, entry, datetime.now())
+            self._seal_cashbook_entry(session, entry, _seal_time(session, CashbookEntry.finalized_at, datetime.now()))
             self._log(session, "Cashbook", entry.id, "Storno-Gegenbuchung", user)
             self._log(session, "Cashbook", original.id, f"Storniert durch {entry.receipt_number}", user)
             new_id = entry.id
@@ -459,8 +500,16 @@ class DBController:
             discount = float(item.get('discount_percent') or 0.0)
             if not (item.get('title') or "").strip():
                 raise ValueError("Jede Position benötigt eine Bezeichnung.")
+            if not all(math.isfinite(v) for v in (quantity, unit_price, discount)):
+                raise ValueError(f"Die Position '{item['title']}' enthält eine ungültige Zahl.")
             if quantity <= 0:
                 raise ValueError(f"Die Menge der Position '{item['title']}' muss größer als 0 sein.")
+            # EN 16931 (BR-27): the price of an item must not be negative; reductions are a discount or credit
+            if unit_price < 0:
+                raise ValueError(f"Der Einzelpreis der Position '{item['title']}' darf nicht negativ sein. "
+                                 "Nachlässe bitte als Gutschrift/Nachlass erfassen.")
+            if not 0 <= discount <= 100:
+                raise ValueError(f"Der Rabatt der Position '{item['title']}' muss zwischen 0 und 100 % liegen.")
             tax_percent = float(item.get('tax_percent', TAX_RATE_OPTIONS[0]))
             if tax_percent not in TAX_RATE_OPTIONS:
                 raise ValueError(f"Unzulässiger Steuersatz {tax_percent} % bei '{item['title']}'.")
@@ -560,11 +609,12 @@ class DBController:
         if has_zero_rate(items) and not invoice.tax_exemption_reason:
             problems.append(EXEMPTION_REQUIRED_MESSAGE)
         categories = {vat_category(i.tax_percent, invoice.tax_exemption_reason) for i in items}
-        if categories & {"AE", "K"}:
-            if not seller.get("vat_id"):
-                problems.append("Bei Reverse Charge / innergemeinschaftlicher Lieferung ist die eigene USt-IdNr. Pflicht.")
-            if not buyer.get("vat_id"):
-                problems.append("Bei Reverse Charge / innergemeinschaftlicher Lieferung ist die USt-IdNr. des Kunden Pflicht (Kundenstamm).")
+        # EN 16931: BR-AE-02, BR-IC-02 and BR-G-02 (export) require the seller's VAT ID, the first two the buyer's as well
+        if categories & {"AE", "K", "G"} and not seller.get("vat_id"):
+            problems.append("Bei Reverse Charge, innergemeinschaftlicher Lieferung und Ausfuhrlieferung ist die eigene "
+                            "USt-IdNr. Pflicht (Einstellungen > Firmendaten).")
+        if categories & {"AE", "K"} and not buyer.get("vat_id"):
+            problems.append("Bei Reverse Charge / innergemeinschaftlicher Lieferung ist die USt-IdNr. des Kunden Pflicht (Kundenstamm).")
         if (invoice.gross_amount or 0) < 0:
             problems.append("Der Rechnungsbetrag darf nicht negativ sein (Gutschrift zu hoch).")
         return problems
@@ -632,7 +682,7 @@ class DBController:
 
         if self.is_draft_number(invoice.invoice_number):
             invoice.invoice_number = self.get_next_invoice_number(session)
-        invoice.finalized_at = datetime.now(timezone.utc)
+        invoice.finalized_at = _seal_time(session, Invoice.finalized_at, datetime.now(timezone.utc))
         session.flush()
         if self.einvoice_validator:
             problems = self.einvoice_validator(invoice)
@@ -644,9 +694,16 @@ class DBController:
         self._finalized_pending.append(invoice.id)
 
     # --- Invoices: CRUD ---
+    @staticmethod
+    def _credit(kwargs: dict) -> float:
+        credit_amount = float(kwargs.get("credit_amount", 0.0) or 0.0)
+        if not math.isfinite(credit_amount) or credit_amount < 0:
+            raise ValueError("Die Gutschrift / der Nachlass darf nicht negativ sein.")
+        return credit_amount
+
     def create_invoice(self, customer_id: int, invoice_date: datetime, delivery_date: datetime, items: list, user: str = None, **kwargs) -> int:
         items = self._normalize_items(items)
-        credit_amount = kwargs.get("credit_amount", 0.0) or 0.0
+        credit_amount = self._credit(kwargs)
         totals = calculate_totals(items, credit_amount)
         status = kwargs.get("status", "Entwurf")
         exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
@@ -696,7 +753,7 @@ class DBController:
 
     def update_invoice(self, invoice_id: int, customer_id: int, invoice_date: datetime, delivery_date: datetime, items: list, user: str = None, **kwargs):
         items = self._normalize_items(items)
-        credit_amount = kwargs.get("credit_amount", 0.0) or 0.0
+        credit_amount = self._credit(kwargs)
         totals = calculate_totals(items, credit_amount)
         exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
 
@@ -840,6 +897,8 @@ class DBController:
                 return False
             if not self.is_finalized(inv):
                 raise GoBDError("Für Entwürfe können keine Mahnungen erstellt werden.")
+            if inv.status not in UNPAID_STATUSES or inv.cancels_invoice_id:
+                raise GoBDError(f"Rechnung {inv.invoice_number} ist {inv.status.lower()}, eine Mahnung ist nicht möglich.")
             if inv.status != "Überfällig":
                 self._log(session, "Invoice", invoice_id, f"Status: {inv.status} -> Überfällig", user)
                 inv.status = "Überfällig"
@@ -886,8 +945,8 @@ class DBController:
             if not invoice or not self.is_finalized(invoice):
                 raise GoBDError("Nur festgeschriebene Rechnungen werden archiviert.")
             if invoice.pdf_path:
-                return invoice.pdf_path
-            pdf_path, pdf_hash = archive_file(generated_pdf, paths.INVOICE_ARCHIVE_DIR, prefix=f"{invoice.invoice_number}_")
+                return paths.resolve(invoice.pdf_path)
+            pdf_path, pdf_hash = archive_file(generated_pdf, paths.INVOICE_ARCHIVE_DIR, prefix=f"{invoice.invoice_number}_", extension=".pdf")
             invoice.pdf_path = pdf_path
             invoice.pdf_hash = pdf_hash
             self._log(session, "Invoice", invoice_id, "PDF archiviert")
@@ -898,9 +957,10 @@ class DBController:
         """Path of the archived PDF; raises GoBDError if the archived file was altered or removed."""
         if not invoice.pdf_path:
             return None
-        if not verify_file(invoice.pdf_path, invoice.pdf_hash):
+        path = paths.resolve(invoice.pdf_path)
+        if not verify_file(path, invoice.pdf_hash):
             raise GoBDError(f"Das archivierte PDF der Rechnung {invoice.invoice_number} fehlt oder wurde verändert!")
-        return invoice.pdf_path
+        return path
 
     def log_actions(self, document_type: str, document_ids: list, action: str):
         with self.get_session() as session:
@@ -1019,9 +1079,10 @@ class DBController:
     # --- Incoming Invoices ---
     def add_incoming_invoice(self, invoice_type: str, date: datetime, amount: float, description: str, source_path: str,
                              user: str = None, einvoice_format: str = None, invoice_number: str = None, supplier_name: str = None) -> int:
-        if not (is_pdf(source_path) or (source_path.lower().endswith(".xml") and einvoice_format)):
+        pdf = is_pdf(source_path)
+        if not (pdf or (source_path.lower().endswith(".xml") and einvoice_format)):
             raise ValueError("Eingangsrechnungen müssen als PDF oder als XRechnung (XML) vorliegen.")
-        file_path, file_hash = archive_file(source_path, paths.INCOMING_INVOICES_DIR)
+        file_path, file_hash = archive_file(source_path, paths.INCOMING_INVOICES_DIR, extension=".pdf" if pdf else ".xml")
         with self.get_session() as session:
             entry = IncomingInvoice(
                 invoice_type=invoice_type,
@@ -1051,6 +1112,20 @@ class DBController:
 
     def get_incoming_invoice(self, invoice_id: int) -> Optional[IncomingInvoice]:
         return self._caches["incoming"].by_id.get(invoice_id)
+
+    def find_duplicate_incoming(self, source_path: str, supplier_name: str = "", invoice_number: str = "") -> Optional[IncomingInvoice]:
+        """An already stored, not cancelled incoming invoice with the same file or the same supplier and number."""
+        file_hash = file_sha256(source_path)
+        supplier, number = (supplier_name or "").strip().casefold(), (invoice_number or "").strip().casefold()
+        for invoice in self._caches["incoming"].by_id.values():
+            if invoice.cancelled_at:
+                continue
+            if invoice.file_hash == file_hash:
+                return invoice
+            if number and supplier and (invoice.invoice_number or "").strip().casefold() == number \
+                    and (invoice.supplier_name or "").strip().casefold() == supplier:
+                return invoice
+        return None
 
     def cancel_incoming_invoice(self, invoice_id: int, user: str = None) -> bool:
         """GoBD: received invoices and their files are retained; they are only marked as cancelled."""
@@ -1099,7 +1174,7 @@ class DBController:
         for entry in session.execute(cashbook):
             if not entry.hash_chain or self._hash_record(self._cashbook_hash_payload(entry), prev) != entry.hash_chain:
                 problems.append(f"Kassenbuch: Eintrag {entry.receipt_number} wurde verändert oder die Kette ist unterbrochen.")
-            if check_files and entry.attachment_path and not verify_file(entry.attachment_path, entry.attachment_hash):
+            if check_files and entry.attachment_path and not verify_file(paths.resolve(entry.attachment_path), entry.attachment_hash):
                 problems.append(f"Kassenbuch: Beleg zu {entry.receipt_number} fehlt oder wurde verändert.")
             prev = entry.hash_chain or prev
 
@@ -1112,13 +1187,13 @@ class DBController:
         for inv in session.execute(invoices):
             if not inv.hash_chain or self._hash_record(self._invoice_hash_payload(inv, items_by_invoice.get(inv.id, [])), prev) != inv.hash_chain:
                 problems.append(f"Rechnung {inv.invoice_number} wurde verändert oder die Kette ist unterbrochen.")
-            if check_files and inv.pdf_path and not verify_file(inv.pdf_path, inv.pdf_hash):
+            if check_files and inv.pdf_path and not verify_file(paths.resolve(inv.pdf_path), inv.pdf_hash):
                 problems.append(f"Archiv-PDF der Rechnung {inv.invoice_number} fehlt oder wurde verändert.")
             prev = inv.hash_chain or prev
 
         if not check_files:
             return problems
         for inv in session.query(IncomingInvoice).order_by(IncomingInvoice.id).all():
-            if not verify_file(inv.file_path, inv.file_hash):
+            if not verify_file(paths.resolve(inv.file_path), inv.file_hash):
                 problems.append(f"Eingangsrechnung '{inv.description}' ({inv.date.strftime('%d.%m.%Y')}): Datei fehlt oder wurde verändert.")
         return problems
