@@ -11,13 +11,11 @@ from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, Prima
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
-from src.models.database import WrongPasswordError
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
 from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, DOCUMENT_COLORS
 from src.utils.signal_bus import SignalBus
 from src.version import APP_AUTHOR, APP_NAME, APP_VERSION
-from src.views.backup_password_dialog import BackupPasswordDialog
 from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
 
 logger = logging.getLogger(__name__)
@@ -154,8 +152,9 @@ class SettingsInterface(QWidget):
     def _add_backup_section(self, layout: QVBoxLayout):
         layout.addWidget(SubtitleLabel("Backup & Wiederherstellung"))
         text = BodyLabel(
-            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine verschlüsselte .backup-Datei oder stelle ein Backup wieder her.\n"
-            "Das Backup wird mit einem Backup-Passwort verschlüsselt und lässt sich damit auf jedem Computer einspielen.\n"
+            "Exportiere alle Daten (Datenbank, archivierte Rechnungen, Belege) als eine .backup-Datei oder stelle ein Backup wieder her.\n"
+            "Das Backup lässt sich auf jedem Computer einspielen. Bitte sicher aufbewahren (z. B. USB-Stick im Büro), "
+            "es enthält alle Geschäftsdaten.\n"
             "Wichtig: Der Datenbankschlüssel ist an dieses Windows-Benutzerkonto gebunden. Bei Neuinstallation oder PC-Wechsel "
             "sind die Daten nur über ein Backup wiederherstellbar – bitte regelmäßig sichern.\n"
             "Achtung: Beim Import werden alle bestehenden Daten überschrieben und das Programm startet neu!")
@@ -315,18 +314,15 @@ class SettingsInterface(QWidget):
                                               BACKUP_FILTER)
         if not path:
             return
-        dialog = BackupPasswordDialog("create", parent=self.window())
-        if not dialog.exec():
-            return
-        # The state of this moment; encrypting and packing all documents runs in the background
-        snapshot, password, folders = self.db_controller.db.snapshot(), dialog.password(), self._backup_folders()
+        # The state of this moment; packing all documents runs in the background
+        snapshot, folders = self.db_controller.db.snapshot(), self._backup_folders()
         self.exportBtn.setEnabled(False)
         self.exportBtn.setText("Backup wird erstellt...")
 
         def run():
             error = ""
             try:
-                create_backup(snapshot, path, password, folders)
+                create_backup(snapshot, path, folders)
             except Exception as e:
                 logger.exception("Backup fehlgeschlagen")
                 error = str(e) or type(e).__name__
@@ -356,23 +352,15 @@ class SettingsInterface(QWidget):
                                    "Die bisherige Datenbank wird als .bak-Datei aufbewahrt. Das Programm startet danach neu.\n\n"
                                    "Möchtest du fortfahren?"):
             return
-        message = ""
-        while True:
-            dialog = BackupPasswordDialog("unlock", message, parent=self.window())
-            if not dialog.exec():
-                return
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                restore_backup(self.db_controller.db, path, dialog.password(), self._backup_folders())
-                break
-            except WrongPasswordError as e:
-                message = str(e)
-            except Exception as e:
-                logger.exception("Backup-Import fehlgeschlagen")
-                notify_error(self, "Fehler beim Import", str(e))
-                return
-            finally:
-                QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            restore_backup(self.db_controller.db, path, self._backup_folders())
+        except Exception as e:
+            logger.exception("Backup-Import fehlgeschlagen")
+            notify_error(self, "Fehler beim Import", str(e))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
 
         # Restart: the running instance must not write its old state over the restored database
         arguments = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv

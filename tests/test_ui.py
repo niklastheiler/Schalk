@@ -166,7 +166,7 @@ def test_backup_is_created_in_the_background(window, controller, qapp, data_dir)
     si = window.settings_interface
     window.switchTo(si)
     si.export_backup()
-    # The password dialog is auto-confirmed; packing runs on a worker thread and reports back
+    # Packing runs on a worker thread and reports back
     deadline = time.monotonic() + 30
     while not si.exportBtn.isEnabled() and time.monotonic() < deadline:
         qapp.processEvents()
@@ -209,7 +209,7 @@ def test_monthly_backup_reminder(window, controller, qapp, data_dir, monkeypatch
     window.remind_of_backup()
     assert len(asked) == 1 and window.backup_due() # postponed: asked again on the next start
 
-    # "Backup jetzt erstellen": location and password, then it counts for this month
+    # "Backup jetzt erstellen": choose the location, then it counts for this month
     monkeypatch.setattr(MessageBox, "exec", lambda self: 1)
     window.remind_of_backup()
     si = window.settings_interface
