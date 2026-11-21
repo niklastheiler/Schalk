@@ -237,5 +237,7 @@ def test_settings_fields_and_layout(window, controller, qapp):
     assert si.edits["iban"].width() == si.edits["company_name"].width() < 400
     assert window.invoice_interface.list_page.titleLabel.text() == "Kundenrechnungen"
     # The longest month name fits into the date picker
+    from PySide6.QtGui import QFontMetrics
     picker = window.cashbook_interface.datePicker
-    assert picker.columns[picker.monthIndex].width() >= picker.fontMetrics().boundingRect("September").width() + 40
+    button = picker.columns[picker.monthIndex]
+    assert button.width() >= QFontMetrics(button.font()).boundingRect("September").width() + 40

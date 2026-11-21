@@ -1,4 +1,5 @@
 from PySide6.QtCore import QDate
+from PySide6.QtGui import QFontMetrics
 from qfluentwidgets import DatePicker
 
 
@@ -27,8 +28,16 @@ class GermanDatePicker(DatePicker):
         # Room for the longest German month name ("September") plus the padding of the button;
         # the tight width of the library cut off names like "November"
         names = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember")
-        widest = max(self.fontMetrics().boundingRect(name).width() for name in names)
+        # Measured with the font of the month button: the picker's own font differs and is set later
+        button = self.columns[self.monthIndex] if len(self.columns) > self.monthIndex else self
+        metrics = QFontMetrics(button.font())
+        widest = max(metrics.boundingRect(name).width() for name in names)
         return max(widest + 56, 130)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # The final font (and display scaling) is known only now
+        self.setColumnWidth(self.monthIndex, self._monthColumnWidth())
 
     def panelInitialValue(self):
         if any(self.value()):
