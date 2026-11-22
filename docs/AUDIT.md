@@ -211,7 +211,7 @@ Windows abweichend, Verhältnisse vergleichbar):
 |---|---|---|---|
 | 1 000 Rechnungen anlegen + festschreiben | 12,9 s | 16,5 s | |
 | je Rechnung | 12,9 ms | 16,5 ms | +3,6 ms durch das synchrone Speichern beim Festschreiben (F-3) und das Versiegeln des Verlaufs |
-| EN-16931-Prüfung (erste / weitere) | 0,32 s / 25 ms | 0,32 s / 32 ms | Messrauschen; Regeln werden beim Start im Hintergrund geladen |
+| EN-16931-Prüfung (erste / weitere) | 0,32 s / 25 ms | 0,32 s / 32 ms | Messrauschen; die Regeln werden beim ersten Festschreiben geladen (seit 1.4.5 nicht mehr beim Start, weil das Laden die Oberfläche blockiert) |
 | ZUGFeRD-PDF/A-3 erzeugen | 42 ms | 43 ms | |
 | Datenbank verschlüsselt speichern | 12 ms | 16 ms | 1 000 Rechnungen ≈ 2 MB |
 | GoBD-Integritätsprüfung (ohne Dateien) | 39 ms | 90 ms | zusätzlich Verlauf, Nummernlücken, Zahlungen |

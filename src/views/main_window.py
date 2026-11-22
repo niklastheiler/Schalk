@@ -141,6 +141,21 @@ class MainWindow(FluentWindow):
         now = datetime.now()
         return last is None or (last.year, last.month) != (now.year, now.month)
 
+    def remind_of_backup_when_ready(self, attempts: int = 20):
+        """
+        The reminder appears only once the window is really on screen: right after an update the first start is
+        slow (Windows checks the new program files), and a dialog opened before the window was maximized and
+        painted stayed invisible behind its grey mask.
+        """
+        handle = self.windowHandle()
+        ready = self.isVisible() and handle is not None and handle.isExposed() and not self.isMinimized()
+        if not ready and attempts > 0:
+            QTimer.singleShot(500, self, lambda: self.remind_of_backup_when_ready(attempts - 1))
+            return
+        if ready:
+            # One more round of the event loop, so the maximized window is laid out and painted first
+            QTimer.singleShot(300, self, self.remind_of_backup)
+
     def remind_of_backup(self):
         """At the start of every month (and on each start until it is done): ask for a backup."""
         if not self.backup_due():
@@ -148,7 +163,7 @@ class MainWindow(FluentWindow):
         month = f"{MONTH_NAMES[datetime.now().month - 1]} {datetime.now().year}"
         box = MessageBox("Monatliches Backup",
                          f"Für {month} wurde noch kein Backup erstellt. Ein Backup sichert alle Daten und Dokumente in einer "
-                         "verschlüsselten Datei, z. B. auf einem USB-Stick, und schützt sie bei einem Defekt oder PC-Wechsel.",
+                         "Datei, z. B. auf einem USB-Stick, und schützt sie bei einem Defekt oder PC-Wechsel.",
                          self)
         box.yesButton.setText("Backup jetzt erstellen")
         box.cancelButton.setText("Später")
