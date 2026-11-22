@@ -6,10 +6,11 @@ from PySide6.QtWidgets import QAbstractItemView, QCompleter, QFormLayout, QHBoxL
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets.components.widgets.line_edit import CompleterMenu, LineEditButton
 from qfluentwidgets import (BodyLabel, ComboBox, EditableComboBox, LineEdit, PrimaryPushButton, PushButton,
-                            SearchLineEdit, SubtitleLabel, TableWidget)
+                            SearchLineEdit, SubtitleLabel, TableWidget, VerticalSeparator)
 from src.controllers.db_controller import DBController, GoBDError, NO_ITEMS_MESSAGE
 from src.utils.calculations import calculate_totals, item_total
 from src.utils.signal_bus import SignalBus
+from src.utils.validation import contact_problems, german_postal_code_validator, postal_code_validator
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
                            has_zero_rate)
 from src.views.common import fmt_money, make_scrollable, notify_error, use_classic_scrollbars
@@ -132,6 +133,11 @@ class DocumentEditor(QWidget):
         self.exemptionEdit.hide()
 
         formLayout.addLayout(customerForm, 1)
+        # Visual separation of the customer data and the document data (dates etc.)
+        formLayout.addSpacing(12)
+        self.formSeparator = VerticalSeparator()
+        formLayout.addWidget(self.formSeparator)
+        formLayout.addSpacing(12)
         formLayout.addLayout(self.documentForm, 1)
         self.vBoxLayout.addLayout(formLayout)
 
@@ -258,6 +264,7 @@ class DocumentEditor(QWidget):
         self.postalCodeEdit.setText(customer.postal_code or "")
         self.cityEdit.setText(customer.city or "")
         self._update_customer_hint()
+        self._update_postal_code_validator()
 
     def _save_customer(self) -> int:
         names = self.nameEdit.text().strip().split(" ", 1)
@@ -288,6 +295,7 @@ class DocumentEditor(QWidget):
         self.exemptionEdit.setText(SMALL_BUSINESS_REASON if self.db_controller.is_small_business() else "")
         self.table.setRowCount(0)
         self.clear_document_fields()
+        self._update_postal_code_validator()
         self.update_totals()
 
     def load_items(self, document):
@@ -421,7 +429,18 @@ class DocumentEditor(QWidget):
             return NO_ITEMS_MESSAGE
         if has_zero_rate(items) and not self.exemptionEdit.text().strip():
             return EXEMPTION_REQUIRED_MESSAGE
+        problems = contact_problems({"postal_code": self.postalCodeEdit.text()}, "des Kunden", self._customer_country())
+        if problems:
+            return problems[0]
         return None
+
+    def _customer_country(self) -> str:
+        customer = self._selected_customer()
+        return (customer.country if customer else None) or "DE"
+
+    def _update_postal_code_validator(self):
+        german = self._customer_country().upper() == "DE"
+        self.postalCodeEdit.setValidator(german_postal_code_validator(self) if german else postal_code_validator(self))
 
     def save(self):
         items = self.collect_items()

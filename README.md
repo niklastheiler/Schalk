@@ -67,7 +67,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 
 Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. Das ist Pflicht für Behörden, die Leitweg-ID wird im Kundenstamm als Käuferreferenz eingetragen.
 
-**Gestaltung.** Rechnungen, Angebote und Mahnungen sind nach DIN 5008 aufgebaut: Die Anschrift passt ins Fenster eines DL- oder C5/6-Umschlags, rechts daneben stehen Nummer, Datum, Kundennummer und Ansprechpartner, Falz- und Lochmarken sind eingezeichnet. Jede Seite hat eine Fußzeile mit Firmen-, Kontakt-, Bank- und Steuerdaten und „Seite x von y“. Logo und Farbe der Dokumente werden unter Einstellungen > Firmendaten gewählt. Entwürfe tragen das Wasserzeichen „ENTWURF“.
+**Gestaltung.** Rechnungen, Angebote und Mahnungen sind nach DIN 5008 aufgebaut: Die Anschrift passt ins Fenster eines DL- oder C5/6-Umschlags, rechts daneben stehen Nummer, Datum, Kundennummer und Ansprechpartner, Falz- und Lochmarken sind eingezeichnet. Jede Seite hat eine Fußzeile mit Firmen-, Kontakt-, Bank- und Steuerdaten und „Seite x von y“. Logo und Farbe werden unter Einstellungen > Firmendaten gewählt; die Farbe gilt auch für das Programm selbst. Entwürfe tragen das Wasserzeichen „ENTWURF“.
 
 **Leistungsdatum.** Statt eines einzelnen Leistungsdatums lässt sich ein Leistungszeitraum angeben (z. B. bei Wartung, Miete oder Projekten). Er erscheint auf der Rechnung und in der E-Rechnung (Abrechnungszeitraum, BG-14).
 

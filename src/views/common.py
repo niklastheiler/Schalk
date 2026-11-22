@@ -9,7 +9,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
-from PySide6.QtCore import QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtCore import QAbstractTableModel, QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea, QFrame, QHBoxLayout, QHeaderView, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
@@ -417,6 +417,14 @@ class ListPage(QWidget):
         self.titleLabel = SubtitleLabel(title, self)
         self.headerLayout.addWidget(self.titleLabel)
         self.headerLayout.addStretch(1)
+        # Filters and search sit next to the title; in a narrow window they move to a row of their own,
+        # otherwise the buttons would be pushed over the search field
+        self.filterBox = QWidget(self)
+        self.filterLayout = QHBoxLayout(self.filterBox)
+        self.filterLayout.setContentsMargins(0, 0, 0, 0)
+        self.headerLayout.addWidget(self.filterBox)
+        self.filterRow = QHBoxLayout()
+        self._filters_in_own_row = False
 
         if date_of:
             self.yearCombo = ComboBox(self)
@@ -427,8 +435,8 @@ class ListPage(QWidget):
             self.monthCombo.addItems(MONTHS)
             self.monthCombo.setFixedWidth(130)
             self.monthCombo.currentTextChanged.connect(self.apply_filters)
-            self.headerLayout.addWidget(self.yearCombo)
-            self.headerLayout.addWidget(self.monthCombo)
+            self.filterLayout.addWidget(self.yearCombo)
+            self.filterLayout.addWidget(self.monthCombo)
 
         self.searchEdit = SearchLineEdit(self)
         self.searchEdit.setPlaceholderText("Suchen...")
@@ -436,8 +444,9 @@ class ListPage(QWidget):
         self._search_timer = QTimer(self, singleShot=True, interval=200)
         self._search_timer.timeout.connect(self.apply_filters)
         self.searchEdit.textChanged.connect(lambda: self._search_timer.start())
-        self.headerLayout.addWidget(self.searchEdit)
+        self.filterLayout.addWidget(self.searchEdit)
         self.vBoxLayout.addLayout(self.headerLayout)
+        self.vBoxLayout.addLayout(self.filterRow)
 
         self.model = RecordTableModel(columns, row_color, self)
         self.proxy = RecordFilterProxy(date_of, self)
@@ -457,12 +466,13 @@ class ListPage(QWidget):
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(38)
+        # Columns without a width share the remaining space, but never get narrower than STRETCH_MIN_WIDTH:
+        # in a small window the table scrolls sideways instead of cutting off e.g. "Firma"
+        self._stretch_columns = [i for i, column in enumerate(columns) if not column.width]
         for i, column in enumerate(columns):
-            if column.width:
-                header.setSectionResizeMode(i, QHeaderView.Interactive)
-                self.table.setColumnWidth(i, column.width)
-            else:
-                header.setSectionResizeMode(i, QHeaderView.Stretch)
+            header.setSectionResizeMode(i, QHeaderView.Interactive)
+            self.table.setColumnWidth(i, column.width or self.STRETCH_MIN_WIDTH)
+        self.table.viewport().installEventFilter(self)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         for i, column in enumerate(columns):
@@ -491,6 +501,50 @@ class ListPage(QWidget):
         column = self.model.columns[index.column()]
         if not column.choices and not column.on_click:
             self.on_activated(index.data(RECORD_ROLE))
+
+    # --- Layout ---
+    STRETCH_MIN_WIDTH = 180
+
+    def eventFilter(self, watched, event):
+        if watched is self.table.viewport() and event.type() == QEvent.Resize:
+            self._fit_columns()
+        return super().eventFilter(watched, event)
+
+    def _fit_columns(self):
+        if not self._stretch_columns:
+            return
+        fixed = sum(self.table.columnWidth(i) for i in range(self.model.columnCount())
+                    if i not in self._stretch_columns)
+        free = self.table.viewport().width() - fixed
+        width = max(self.STRETCH_MIN_WIDTH, free // len(self._stretch_columns))
+        for i in self._stretch_columns:
+            self.table.setColumnWidth(i, width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_header()
+
+    def _arrange_header(self):
+        """Filters next to the title when everything fits, otherwise in a row below the title."""
+        margins = self.vBoxLayout.contentsMargins()
+        available = self.width() - margins.left() - margins.right()
+        spacing = self.headerLayout.spacing()
+        needed = sum(self.headerLayout.itemAt(i).widget().sizeHint().width() + spacing
+                     for i in range(self.headerLayout.count())
+                     if self.headerLayout.itemAt(i).widget() and self.headerLayout.itemAt(i).widget() is not self.filterBox)
+        own_row = needed + self.filterBox.sizeHint().width() + spacing > available
+        if own_row == self._filters_in_own_row:
+            return
+        self._filters_in_own_row = own_row
+        if own_row:
+            self.headerLayout.removeWidget(self.filterBox)
+            self.filterRow.addWidget(self.filterBox)
+            self.filterRow.addStretch(1)
+        else:
+            self.filterRow.removeWidget(self.filterBox)
+            while self.filterRow.count():
+                self.filterRow.takeAt(0)
+            self.headerLayout.insertWidget(2, self.filterBox)
 
     # --- Sorting ---
     def _on_header_clicked(self, column: int):
