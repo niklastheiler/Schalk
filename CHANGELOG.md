@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.4
+
+- PDF-Symbol öffnet nur noch „Speichern unter“, ohne dass Adobe Acrobat mit aufgeht
+- Die Frage nach ungespeicherten Änderungen kam manchmal, obwohl nur in ein Feld geklickt wurde
+
 ## 1.4.3
 
 - Oberfläche fest in 125 % Größe; die Einstellung „Darstellung“ entfällt
