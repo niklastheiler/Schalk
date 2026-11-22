@@ -1,9 +1,10 @@
 from datetime import datetime
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
-from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme
+from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
 from src.controllers.db_controller import DBController
 from src.utils import paths
+from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, document_color
 from src.utils.signal_bus import SignalBus
 from src.views.analysis_interface import AnalysisInterface
 from src.views.cashbook_interface import CashbookInterface
@@ -57,11 +58,20 @@ class MainWindow(FluentWindow):
         self._overdue_timer.timeout.connect(db_controller.refresh_overdue)
         self._overdue_timer.start()
 
+    def apply_color(self):
+        name = self.db_controller.get_setting("document_color", DEFAULT_DOCUMENT_COLOR)
+        if name != getattr(self, "_applied_color", None):
+            self._applied_color = name
+            setThemeColor(document_color(name))
+
     def init_window(self):
         self.resize(1280, 820)
         self.setMinimumWidth(900)
         self.setWindowTitle('Schalk')
         setTheme(Theme.LIGHT)
+        # The colour chosen in the settings is the accent of the program as well as of the documents
+        self.apply_color()
+        SignalBus.get().settingsChanged.connect(self.apply_color)
         self.navigationInterface.setExpandWidth(240)
         # The menu stays expanded down to the minimum window width (the default collapses it below ~1000 px)
         self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())

@@ -265,3 +265,74 @@ def test_form_labels_use_the_fluent_label(window):
                 item = form.itemAt(row, QFormLayout.LabelRole)
                 if item and isinstance(item.widget(), QLabel) and item.widget().text():
                     assert isinstance(item.widget(), BodyLabel), item.widget().text()
+
+
+def test_contact_data_is_validated(window, controller, qapp):
+    from src.views.customer_interface import customer_problems
+    assert any("PLZ" in p for p in customer_problems({"postal_code": "123", "country": "DE"}))
+    assert customer_problems({"postal_code": "1010", "country": "AT"}) == []
+    assert any("Telefonnummer" in p for p in customer_problems({"phone": "abc"}))
+    assert any("E-Mail" in p for p in customer_problems({"email": "info@firma"}))
+    # Typing: German postal codes take at most 5 digits
+    editor = window.customer_interface.editor
+    editor.clear_form()
+    edit = editor.edits["postal_code"]
+    edit.setFocus()
+    from PySide6.QtTest import QTest
+    QTest.keyClicks(edit, "12a3456")
+    assert edit.text() == "12345"
+    editor.edits["country"].setText("PL")
+    edit.clear()
+    QTest.keyClicks(edit, "90-001")
+    assert edit.text() == "90-001"
+    # Settings: own postal code, phone, e-mail and tax number
+    si = window.settings_interface
+    si.load_settings()
+    for key, value in (("email", "info@test"), ("tax_id", "12345")):
+        si.load_settings()
+        si.edits[key].setText(value)
+        assert any(p for p in si._validate({k: e.text().strip() for k, e in si.edits.items()}))
+    si.load_settings()
+    assert si._validate({k: e.text().strip() for k, e in si.edits.items()}) == []
+    # Invoice editor: postal code of the customer
+    inv = window.invoice_interface.editor
+    inv.clear_form()
+    inv.companyEdit.setText("Kunde")
+    inv.postalCodeEdit.setText("123")
+    assert "PLZ" in (inv.validate([{"title": "x", "tax_percent": 19.0}]) or "")
+
+
+def test_narrow_window_keeps_header_and_columns_readable(window, controller, qapp):
+    controller.add_customer(company_name="Eine Firma mit langem Namen")
+    window.resize(window.minimumWidth(), 700)
+    window.show()
+    for page in (window.supplier_invoice_interface, window.invoice_interface, window.customer_interface):
+        window.switchTo(page)
+        for _ in range(5):
+            qapp.processEvents()
+        lp = getattr(page, "list_page", page)
+        widgets = [lp.headerLayout.itemAt(i).widget() for i in range(lp.headerLayout.count())
+                   if lp.headerLayout.itemAt(i).widget() and lp.headerLayout.itemAt(i).widget().isVisible()]
+        for left, right in zip(widgets, widgets[1:]):
+            assert left.geometry().right() <= right.geometry().left(), (left, right)
+    customers = window.customer_interface.list_page
+    assert customers.table.columnWidth(0) >= customers.STRETCH_MIN_WIDTH
+    # Wide window: filters back next to the title, the name column takes the free space
+    window.resize(1700, 900)
+    for _ in range(5):
+        qapp.processEvents()
+    assert customers.table.columnWidth(0) > customers.STRETCH_MIN_WIDTH
+    window.switchTo(window.invoice_interface)
+    for _ in range(5):
+        qapp.processEvents()
+    assert not window.invoice_interface.list_page._filters_in_own_row
+
+
+def test_editor_separator_and_program_color(window, controller, qapp):
+    from qfluentwidgets import themeColor
+    from src.utils.pdf_generator import DOCUMENT_COLORS
+    for editor in (window.invoice_interface.editor, window.quote_interface.editor):
+        assert editor.formSeparator is not None
+    controller.set_settings({"document_color": "Bordeaux"})
+    qapp.processEvents()
+    assert themeColor().name().lower() == DOCUMENT_COLORS["Bordeaux"].lower()

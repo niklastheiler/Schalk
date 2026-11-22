@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayou
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SubtitleLabel
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
+from src.utils.validation import contact_problems, german_postal_code_validator, is_valid_tax_number, phone_validator
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
@@ -133,11 +134,18 @@ class SettingsInterface(QWidget):
             self.documentColorCombo = ComboBox(tab)
             self.documentColorCombo.setFixedWidth(FIELD_WIDTH)
             self.documentColorCombo.addItems(list(DOCUMENT_COLORS))
-            self.documentColorCombo.setToolTip("Farbe von Überschrift, Tabellenkopf und Gesamtbetrag in Rechnungen, Angeboten und Mahnungen")
-            form.addRow(BodyLabel("Farbe der Dokumente"), self.documentColorCombo)
+            self.documentColorCombo.setToolTip("Farbe des Programms und von Überschrift, Tabellenkopf und Gesamtbetrag "
+                                               "in Rechnungen, Angeboten und Mahnungen")
+            form.addRow(BodyLabel("Farbe (Programm und Dokumente)"), self.documentColorCombo)
             self.smallBusinessCheck = CheckBox("Kleinunternehmer gemäß § 19 UStG (keine Umsatzsteuer, neue Positionen mit 0 %)", tab)
             form.addRow(BodyLabel("Besteuerung"), self.smallBusinessCheck)
-        return self._form_tab(FIRM_FIELDS, extra)
+        tab = self._form_tab(FIRM_FIELDS, extra)
+        # Own company: always in Germany
+        self.edits["postal_code"].setValidator(german_postal_code_validator(self))
+        self.edits["phone"].setValidator(phone_validator(self))
+        self.edits["tax_id"].setPlaceholderText("z. B. 12/345/67890")
+        self.edits["vat_id"].setPlaceholderText("z. B. DE123456789")
+        return tab
 
     def _build_bank_tab(self) -> QWidget:
         def extra(form, tab):
@@ -232,6 +240,9 @@ class SettingsInterface(QWidget):
             problems.append("Die IBAN ist ungültig (Prüfziffer).")
         if values["bic"] and not stdnum_bic.is_valid(values["bic"]):
             problems.append("Die BIC ist ungültig.")
+        problems += contact_problems(values, "der Firma")
+        if values["tax_id"] and not is_valid_tax_number(values["tax_id"]):
+            problems.append("Die Steuernummer ist ungültig (Format des Finanzamts, z. B. 12/345/67890).")
         if values["vat_id"] and not stdnum_vat.is_valid(values["vat_id"]):
             problems.append("Die USt-IdNr. ist ungültig (Format/Prüfziffer).")
         return problems

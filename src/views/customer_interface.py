@@ -1,15 +1,12 @@
-import re
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, FluentIcon as FIF, LineEdit, PrimaryPushButton, PushButton, RoundMenu, SubtitleLabel
 from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController
 from src.utils.signal_bus import SignalBus
+from src.utils.validation import contact_problems, german_postal_code_validator, phone_validator, postal_code_validator
 from src.views.common import Column, ListPage, confirm, make_scrollable, notify_error, notify_success
 from src.views.invoice_interface import add_action
-
-
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 def customer_problems(values: dict) -> list:
@@ -29,8 +26,7 @@ def customer_problems(values: dict) -> list:
             if not stdnum_vat.is_valid(vat_id):
                 problems.append("Die USt-IdNr. ist ungültig (Format/Prüfziffer).")
         values["vat_id"] = vat_id
-    if values.get("email") and not _EMAIL_RE.fullmatch(values["email"]):
-        problems.append("Die E-Mail-Adresse ist ungültig.")
+    problems += contact_problems(values, "des Kunden", values["country"])
     return problems
 
 
@@ -83,9 +79,17 @@ class CustomerEditor(QWidget):
             edit.setPlaceholderText(placeholder)
             form.addRow(BodyLabel(label), edit)
             self.edits[key] = edit
+        self.edits["phone"].setValidator(phone_validator(self))
+        # German postal codes have 5 digits; other countries their own format
+        self.edits["country"].textChanged.connect(self._update_postal_code_validator)
+        self._update_postal_code_validator()
         content_layout.addLayout(form)
         content_layout.addStretch(1)
         layout.addWidget(make_scrollable(content))
+
+    def _update_postal_code_validator(self):
+        german = (self.edits["country"].text().strip().upper() or "DE") == "DE"
+        self.edits["postal_code"].setValidator(german_postal_code_validator(self) if german else postal_code_validator(self))
 
     def clear_form(self):
         self.current_customer_id = None
