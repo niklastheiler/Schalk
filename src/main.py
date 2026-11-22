@@ -84,9 +84,6 @@ def main():
     setup_logging()
     install_excepthook()
     _set_windows_app_id()
-    # Size of the interface chosen in the settings (100-200 %); must happen before the QApplication exists
-    from src.utils.ui_scale import apply_before_start
-    apply_before_start()
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)

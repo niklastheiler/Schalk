@@ -103,7 +103,6 @@ class SettingsInterface(UnsavedChanges, QWidget):
         self._add_tab("firm", "Firmendaten", self._build_firm_tab())
         self._add_tab("bank", "Bankdaten && Zahlungsziel", self._build_bank_tab())
         self._add_tab("security", "Sicherheit && GoBD", self._build_security_tab())
-        self._add_tab("display", "Darstellung", self._build_display_tab())
         self.pivot.setCurrentItem("firm")
 
         bottom = QHBoxLayout()
@@ -117,8 +116,6 @@ class SettingsInterface(UnsavedChanges, QWidget):
     # --- UI ---
     def _add_tab(self, key: str, title: str, widget: QWidget):
         page = make_scrollable(widget)
-        self._pages = getattr(self, "_pages", {})
-        self._pages[key] = page
         self.stackedWidget.addWidget(page)
         self.pivot.addItem(key, title, lambda: self.stackedWidget.setCurrentWidget(page))
 
@@ -262,54 +259,6 @@ class SettingsInterface(UnsavedChanges, QWidget):
         layout.addLayout(buttons)
         layout.addStretch(1)
         return tab
-
-    def _build_display_tab(self) -> QWidget:
-        from src.utils import ui_scale
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(36, 12, 36, 36)
-        layout.addWidget(SubtitleLabel("Schriftgröße"))
-        text = BodyLabel("Vergrößert Schrift, Eingabefelder und Symbole gemeinsam, damit alles lesbar und richtig "
-                         "angeordnet bleibt. Die Änderung wird nach einem Neustart von Schalk wirksam.")
-        text.setWordWrap(True)
-        layout.addWidget(text)
-        row = QHBoxLayout()
-        self.scaleCombo = ComboBox(tab)
-        for scale in ui_scale.SCALES:
-            self.scaleCombo.addItem(f"{scale} %", userData=scale)
-        self.scaleCombo.setCurrentIndex(ui_scale.SCALES.index(ui_scale.load()))
-        self.scaleCombo.setFixedWidth(160)
-        self.scaleCombo.currentIndexChanged.connect(self._on_scale_chosen)
-        row.addWidget(self.scaleCombo)
-        row.addStretch(1)
-        layout.addLayout(row)
-        layout.addStretch(1)
-        return tab
-
-    def _on_scale_chosen(self, index: int):
-        """Saved right away (not with the other settings); offers to restart so it takes effect."""
-        from src.utils import ui_scale
-        scale = self.scaleCombo.itemData(index)
-        try:
-            ui_scale.save(scale)
-        except OSError as e:
-            notify_error(self, "Nicht gespeichert", str(e))
-            return
-        if confirm(self, "Schriftgröße", f"Die Schriftgröße {scale} % wird nach einem Neustart wirksam.\n\nJetzt neu starten?"):
-            self.restart()
-
-    def restart(self):
-        """Starts Schalk again and closes this instance (unsaved input is asked about when closing)."""
-        window = self.window()
-        if not window.close():
-            return
-        arguments = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
-        QProcess.startDetached(sys.executable, arguments)
-        QApplication.quit()
-
-    def unsaved_fields(self) -> list:
-        # The size is saved on its own as soon as it is chosen
-        return [page for key, page in self._pages.items() if key != "display"]
 
     # --- Load / save ---
     def _mark_dirty(self):

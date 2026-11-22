@@ -1,7 +1,7 @@
 from datetime import datetime
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
-from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
+from qfluentwidgets import FluentIcon as FIF, FluentWindow, NavigationPushButton, setFont, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
 from src.controllers.db_controller import DBController
 from src.utils import paths
 from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, document_color
@@ -22,8 +22,8 @@ MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "Au
                "November", "Dezember"]
 
 
-# Narrowest window (in logical pixels) in which the expanded menu stays beside the pages
-NAVIGATION_INLINE_WIDTH = 1100
+NAVIGATION_WIDTH = 280
+NAVIGATION_FONT_SIZE = 16
 
 
 class MainWindow(FluentWindow):
@@ -54,6 +54,8 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.analysis_interface, FIF.PIE_SINGLE, 'Auswertung')
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
+        for button in self.navigationInterface.findChildren(NavigationPushButton):
+            setFont(button, NAVIGATION_FONT_SIZE)
         self._guard_tab_changes()
 
         self.updates = UpdateNotifier(self)
@@ -71,21 +73,18 @@ class MainWindow(FluentWindow):
             setThemeColor(document_color(name))
 
     def init_window(self):
-        # With a large interface (setting "Darstellung" or Windows display scaling) the screen offers fewer
-        # logical pixels: the window never asks for more than the screen has
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.resize(min(1280, screen.width()), min(820, screen.height()))
-        self.setMinimumWidth(min(900, screen.width()))
+        self.resize(1280, 820)
+        self.setMinimumWidth(900)
         self.setWindowTitle('Schalk')
         setTheme(Theme.LIGHT)
         # The colour chosen in the settings is the accent of the program as well as of the documents
         self.apply_color()
         SignalBus.get().settingsChanged.connect(self.apply_color)
-        self.navigationInterface.setExpandWidth(240)
+        # A bit larger than the library default (240 px, 14 px text): easier to read and to hit
+        self.navigationInterface.setExpandWidth(NAVIGATION_WIDTH)
         # The menu stays expanded down to the minimum window width (the default collapses it below ~1000 px)
-        # Below this width (large interface on a small screen) the menu stays collapsed to icons and opens over the
-        # content, so the pages keep enough room
-        self.navigationInterface.setMinimumExpandWidth(NAVIGATION_INLINE_WIDTH)
+        self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())
+        screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.center().x() - self.width() // 2, screen.center().y() - self.height() // 2)
 
     def showEvent(self, event):
@@ -93,8 +92,7 @@ class MainWindow(FluentWindow):
         if not getattr(self, "_navigation_expanded", False):
             # Expanded on start; afterwards the menu button collapses and expands it as usual
             self._navigation_expanded = True
-            if self.width() >= NAVIGATION_INLINE_WIDTH:
-                QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
+            QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
 
     def _guard_tab_changes(self):
         """
