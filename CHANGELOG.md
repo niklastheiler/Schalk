@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4
+
+- Zahlungen: „Als bezahlt markieren“ fragt das Datum des Zahlungseingangs ab; neue Spalte „Bezahlt am“ bei den Kundenrechnungen. „Teilbezahlt“ gibt es nicht mehr, Rechnungen mit diesem Status sind wieder „Offen“. Eine Rücklastschrift (zurück auf „Offen“) wird nachvollziehbar zurückgebucht
+- Kassenbuch: Bei „Einnahme“ lässt sich eine offene Rechnung des laufenden Monats auswählen (Betrag, Text und Rechnungs-PDF werden übernommen); beim Festschreiben wird die Rechnung automatisch „Bezahlt“. „Barentnahme Privat“ hat kein Belegfeld mehr
+- Kassenbuch: Ein angefügter Beleg wird ausgewertet (Betrag, Beschreibung, Datum, Einnahme oder Ausgabe)
+- Lieferanten- und Sonstige Rechnungen: Lieferant, Rechnungsnummer, Datum und Betrag werden auch aus PDFs ohne E-Rechnung erkannt; das Betragsfeld ist auf kleinen Bildschirmen wieder sichtbar; erhaltene E-Rechnungen werden gegen die EN-16931-Regeln geprüft
+- PDF-Symbol neben dem Status zum Drucken von Rechnungen, Angeboten und Mahnungen; „Archivieren“ entfällt bei Rechnungen und Angeboten
+- DATEV-Export: alle bezahlten Rechnungen (bisher nur archivierte), ohne stornierte Rechnungen und ihre Stornorechnungen
+- Beim Wechsel des Reiters oder Schließen des Programms mit ungespeicherten Eingaben fragt Schalk „Verwerfen“ oder „Bleiben“
+- Mahnungen nennen den offenen Betrag und werden als Kopie archiviert
+- GoBD: Datenexport für die Betriebsprüfung (Einstellungen → Sicherheit & GoBD), Verlauf und Änderungen an Kunden und Firmendaten manipulationssicher protokolliert, Integritätsprüfung erkennt Lücken in Rechnungs- und Belegnummern
+- Festgeschriebene Rechnungen und Kassenbuchungen werden sofort gespeichert; eine Rechnung mit Datum in der Zukunft wird nicht festgeschrieben
+- Tabellen zentriert; Datumsfelder werden in schmalen Fenstern nicht mehr überdeckt
+
 ## 1.3.2
 
 - E-Rechnung ohne USt-IdNr. (nur Steuernummer, z. B. Kleinunternehmer) lässt sich wieder festschreiben (Fehler BR-CO-26)
