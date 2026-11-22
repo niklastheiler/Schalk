@@ -4,10 +4,10 @@ if sys.version_info < (3, 15):
     sys.exit("Schalk benötigt Python 3.15.")
 if sys.platform != "win32":
     sys.exit("Schalk läuft ausschließlich unter Windows.")
-# Windows 11 starts with build 22000; Windows 10 is not supported
-if sys.getwindowsversion().build < 22000:
+# Windows 11 24H2 (build 26100) or later
+if sys.getwindowsversion().build < 26100:
     import ctypes
-    message = "Schalk benötigt Windows 11. Windows 10 wird nicht unterstützt."
+    message = "Schalk benötigt Windows 11 in der Version 24H2 oder neuer."
     ctypes.windll.user32.MessageBoxW(None, message, "Schalk", 0x10) # MB_ICONERROR
     sys.exit(message)
 

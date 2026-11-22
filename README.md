@@ -1,6 +1,6 @@
 # Schalk
 
-Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 11** (Windows 10 wird nicht unterstützt): Kundenrechnungen als E-Rechnung (ZUGFeRD/XRechnung), Angebote, Mahnungen, Kassenbuch, Eingangsrechnungen, Kunden und Auswertung. Die Datenhaltung ist GoBD-orientiert.
+Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter **Windows 11** (ab Version 24H2): Kundenrechnungen als E-Rechnung (ZUGFeRD/XRechnung), Angebote, Mahnungen, Kassenbuch, Eingangsrechnungen, Kunden und Auswertung. Die Datenhaltung ist GoBD-orientiert.
 
 ## Installation
 
