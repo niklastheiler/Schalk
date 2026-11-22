@@ -2,7 +2,6 @@ import ctypes
 import logging
 import os
 import sys
-import threading
 from datetime import datetime
 from PySide6.QtCore import QLockFile, Qt, QTimer
 from PySide6.QtGui import QIcon
@@ -72,14 +71,19 @@ def open_database():
         return None
 
 
-def _warm_up():
-    # Loading Saxon and compiling the EN 16931 rules takes a few seconds the first time; done in the
-    # background, the first finalization of an invoice doesn't wait for it
+def _validate_with_wait_cursor(db_controller, invoice):
+    """
+    EN 16931 check before an invoice is sealed. The rules are compiled on first use (a few seconds); meanwhile
+    the wait cursor shows that Schalk is working. They are no longer preloaded on a worker thread at the start:
+    Saxon holds the Python interpreter lock while compiling, which froze the window right after the start
+    (after an update long enough for Windows to grey it out as "not responding").
+    """
+    from src.utils.invoice_documents import validate_invoice
+    QApplication.setOverrideCursor(Qt.WaitCursor)
     try:
-        from src.utils.einvoice_validation import warm_up
-        warm_up()
-    except Exception:
-        logger.exception("Prüfregeln konnten nicht vorab geladen werden")
+        return validate_invoice(db_controller, invoice)
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 def main():
@@ -108,9 +112,9 @@ def main():
         return 1
     db_controller = DBController(db_manager)
 
-    from src.utils.invoice_documents import archive_invoice_document, validate_invoice
+    from src.utils.invoice_documents import archive_invoice_document
     db_controller.archiver = lambda invoice_id: archive_invoice_document(db_controller, invoice_id)
-    db_controller.einvoice_validator = lambda invoice: validate_invoice(db_controller, invoice)
+    db_controller.einvoice_validator = lambda invoice: _validate_with_wait_cursor(db_controller, invoice)
 
     from src.views.main_window import MainWindow
     window = MainWindow(db_controller)
@@ -118,7 +122,6 @@ def main():
     window.check_integrity_on_startup()
     window.updates.start()
     QTimer.singleShot(1000, window, window.remind_of_backup_when_ready)
-    threading.Thread(target=_warm_up, name="schalk-warm-up", daemon=True).start()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 
     if not window.isVisible():

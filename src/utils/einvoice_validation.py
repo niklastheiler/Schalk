@@ -48,12 +48,6 @@ def _run_schematron(stylesheet: str, xml: bytes) -> List[str]:
     return problems
 
 
-def warm_up():
-    """Starts Saxon and compiles the rules used when an invoice is finalized (call on a worker thread)."""
-    with _LOCK:
-        _executable(_FACTURX_XSLT)
-
-
 def validate_en16931(xml: bytes) -> List[str]:
     """ZUGFeRD/Factur-X invoice (profile EN 16931)."""
     return _run_schematron(_FACTURX_XSLT, xml)
