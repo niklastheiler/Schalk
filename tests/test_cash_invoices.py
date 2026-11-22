@@ -62,7 +62,7 @@ def test_cashbook_form_by_type(controller, seller, qapp):
     page.typeCombo.setCurrentText("Barentnahme Privat")
     assert not page.attachBox.isVisibleTo(page) and page.attachment_path == "" # no receipt for private withdrawals
     page.typeCombo.setCurrentText("Einnahme")
-    assert page.invoiceBox.isVisibleTo(page) and not page.attachBox.isVisibleTo(page)
+    assert page.invoiceBox.isVisibleTo(page) and page.attachBox.isVisibleTo(page) # receipt required for income too
     assert page.invoiceCombo.itemText(0) == "Ohne Rechnung" and page.invoiceCombo.itemData(1) == invoice_id
 
     page.invoiceCombo.setCurrentIndex(1)
@@ -96,3 +96,38 @@ def test_closing_with_unsaved_input_asks(window, qapp, monkeypatch):
     event = QCloseEvent()
     window.closeEvent(event)
     assert not event.isAccepted() and window.cashbook_interface.amountEdit.text() == "5,00"
+
+
+def test_receipt_is_required_for_income_and_business_withdrawals(controller, seller):
+    from receipts import RECEIPT
+    c = controller
+    for entry_type in ("Einnahme", "Barentnahme Firma"):
+        with pytest.raises(ValueError, match="Beleg Pflicht"):
+            c.add_cashbook_entry(datetime(2026, 11, 2), 10.0, "ohne", "A", entry_type, 19)
+    income = c.add_cashbook_entry(datetime(2026, 11, 2), 50.0, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
+    c.add_cashbook_entry(datetime(2026, 11, 3), 5.0, "Privat", "A", "Barentnahme Privat", 0) # no receipt needed
+    # Editing keeps the receipt; an invoice's PDF is its receipt
+    c.update_cashbook_entry(income, datetime(2026, 11, 2), 60.0, "Einlage", "Einnahme")
+    assert c.get_cashbook_entry(income).attachment_hash
+    invoice_id = _this_month_invoice(c)
+    entry = c.add_cashbook_entry(datetime.now(), 119.0, "Rechnung bar", "A", "Einnahme", 19, invoice_id=invoice_id)
+    assert c.get_cashbook_entry(entry).attachment_hash == c.get_invoice_header(invoice_id).pdf_hash
+
+
+def test_form_receipt_next_to_a_short_description(controller, seller, qapp):
+    from src.views.cashbook_interface import CashbookInterface
+    page = CashbookInterface(controller)
+    page.resize(1200, 500)
+    page.show()
+    qapp.processEvents()
+    assert page.descEdit.width() <= 375
+    for entry_type, receipt, invoice in (("Einnahme", True, True), ("Barentnahme Firma", True, False),
+                                         ("Barentnahme Privat", False, False)):
+        page.typeCombo.setCurrentText(entry_type)
+        assert page.attachBox.isVisibleTo(page) == receipt and page.invoiceBox.isVisibleTo(page) == invoice
+    page.typeCombo.setCurrentText("Einnahme")
+    # The receipt field sits right after the description
+    assert 0 < page.attachBox.x() - (page.descEdit.mapTo(page, page.descEdit.rect().topRight()).x()) < 40
+    page.amountEdit.setText("10,00")
+    page.add_entry() # neither invoice nor receipt: refused
+    assert controller.get_cashbook_entries() == []

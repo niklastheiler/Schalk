@@ -2,10 +2,11 @@ from datetime import datetime
 import pytest
 from PySide6.QtWidgets import QFileDialog
 from src.utils import paths
+from receipts import RECEIPT
 
 
 def test_cashbook_receipt_must_be_pdf(controller, tmp_path):
-    controller.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19)
+    controller.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
     image = tmp_path / "beleg.png"
     image.write_bytes(b"\x89PNG\r\n")
     with pytest.raises(ValueError, match="nur PDF"):

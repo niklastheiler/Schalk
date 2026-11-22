@@ -6,6 +6,7 @@ from src.models.database import DatabaseManager
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
 from src.utils.einvoice_parser import parse_einvoice_xml, read_einvoice, to_html
+from receipts import RECEIPT
 
 UBL = """<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
 <cbc:CustomizationID>urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0</cbc:CustomizationID><cbc:ID>L-4711</cbc:ID><cbc:IssueDate>2026-09-15</cbc:IssueDate><cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
@@ -16,7 +17,7 @@ UBL = """<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:
 
 def test_cashbook_rules(controller, tmp_path):
     c = controller
-    c.add_cashbook_entry(datetime(2026, 10, 1), 500, "Einlage", "A", "Einnahme", 19)
+    c.add_cashbook_entry(datetime(2026, 10, 1), 500, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
     receipt = tmp_path / "beleg.pdf"
     receipt.write_bytes(b"%PDF-1.4 test")
     entry = c.add_cashbook_entry(datetime(2026, 10, 2), 20, "Porto", "A", "Barentnahme Firma", 19, attachment_source=str(receipt))

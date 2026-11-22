@@ -39,6 +39,8 @@ INVOICE_TRANSITIONS = {
 QUOTE_STATUSES = ["Entwurf", "Versendet", "Angenommen", "Abgelehnt", "Abgelaufen"]
 CASHBOOK_TYPES = ["Einnahme", "Barentnahme Privat", "Barentnahme Firma"]
 CASHBOOK_INCOME_TYPES = ["Einnahme"]
+# GoBD: these entries need a receipt (for cash income for an invoice, the invoice itself)
+CASHBOOK_RECEIPT_REQUIRED = ["Einnahme", "Barentnahme Firma"]
 # Statuses in which an invoice is still (partly) unpaid
 UNPAID_STATUSES = ("Offen", "Überfällig")
 DEFAULT_PAYMENT_TERMS = 14
@@ -433,10 +435,23 @@ class DBController:
             raise ValueError(f"Der Betrag muss dem offenen Betrag von Rechnung {invoice.invoice_number} entsprechen "
                              f"({fmt_money(self.outstanding_amount(invoice))}).")
 
+    def _receipt_for(self, entry_type: str, attachment_source: Optional[str], invoice_id: Optional[int],
+                     has_receipt: bool = False) -> Optional[str]:
+        """The receipt to archive: the given file or the PDF of the invoice; raises if a required one is missing."""
+        if not attachment_source and invoice_id and not has_receipt:
+            invoice = self.get_invoice(invoice_id)
+            attachment_source = self.get_archived_invoice_pdf(invoice) if invoice else None
+        if entry_type in CASHBOOK_RECEIPT_REQUIRED and not attachment_source and not has_receipt:
+            what = "eine Einnahme (Rechnung auswählen oder Beleg hochladen)" if entry_type in CASHBOOK_INCOME_TYPES \
+                else f"„{entry_type}“"
+            raise ValueError(f"Für {what} ist ein Beleg Pflicht.")
+        return attachment_source
+
     def add_cashbook_entry(self, entry_date: datetime, amount: float, description: str, category: str, entry_type: str, tax_percent: float, attachment_source: str = None, user: str = None, invoice_id: int = None) -> int:
         """Creates a draft entry; it stays editable until the cashbook is finalized."""
         self._check_cashbook_input(amount, entry_type)
         self._check_cash_invoice(invoice_id, amount, entry_type)
+        attachment_source = self._receipt_for(entry_type, attachment_source, invoice_id)
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
         self._check_cash_balance(add=(_naive(entry_date).date(), signed))
 
@@ -472,6 +487,8 @@ class DBController:
         current = self.get_cashbook_entry(entry_id)
         if current is None:
             raise GoBDError("Eintrag nicht gefunden.")
+        keeps_receipt = bool(current.attachment_path) and invoice_id == current.invoice_id
+        attachment_source = self._receipt_for(entry_type, attachment_source, invoice_id, keeps_receipt)
         if attachment_source and not is_pdf(attachment_source):
             raise ValueError("Als Beleg sind nur PDF-Dateien erlaubt.")
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
