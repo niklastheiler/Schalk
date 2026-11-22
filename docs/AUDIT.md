@@ -255,8 +255,10 @@ Abhängigkeiten auf Sicherheitslücken, eingeschränkte Token-Rechte und Timeout
 
 **Verbleibende Einschränkungen:** Actions sind auf Hauptversionen gepinnt, nicht auf Commit-SHAs; Dependabot aktualisiert
 sie. Es gibt keine Coverage-Messung. Die Oberflächentests laufen offscreen und ersetzen keinen Klicktest unter Windows. Der
-Release ist nicht reproduzierbar im Sinne bitgleicher Builds, weil PyInstaller Zeitstempel schreibt. Ausführungszeiten und
-Erfolgsquote des neuen Jobs liegen erst nach dem ersten Lauf auf GitHub vor.
+Release ist nicht reproduzierbar im Sinne bitgleicher Builds, weil PyInstaller Zeitstempel schreibt.
+
+**Ausführungszeiten (erster Lauf auf diesem Stand, 22.11.2026, Run 45006632060):** `quality` 16 s (Ubuntu, Python 3.15.2),
+`check` 3:40 min (Windows: Installation 46 s, Tests 49 s, Mustang-Validierung 1:44 min). Beide erfolgreich, die Jobs laufen parallel.
 
 ---
 
@@ -271,7 +273,7 @@ Erfolgsquote des neuen Jobs liegen erst nach dem ersten Lauf auf GitHub vor.
 | E-Rechnungen (Mustang, 12 Fälle × ZUGFeRD + XRechnung) | 24/24 gültig (CI) | 24/24 gültig (lokal nachgeprüft) |
 
 Lokale Umgebung: Linux, Python 3.13, DPAPI durch eine Test-Attrappe ersetzt. Maßgeblich ist der CI-Lauf unter Windows
-mit Python 3.15 und echter DPAPI.
+mit Python 3.15 und echter DPAPI: **erfolgreich** (alle Tests und 24/24 E-Rechnungen gültig, Run 45006632060).
 
 **Neue Testschwerpunkte:** Zahlungen und Status, Manipulationserkennung (Verlauf, Nummern, Zahlungen), Haltbarkeit des
 Festschreibens, Wiederherstellung, Migration 1.3 → 1.4, Eingangsprüfung, XML-Angriffe, GoBD-Export inklusive
@@ -290,7 +292,7 @@ In den geprüften Bereichen sind keine kritischen und keine offenen hohen techni
 hohen Mängel (F-1, F-3, G-1, G-4) sind behoben und durch Tests abgesichert. Ein uneingeschränktes GO wird nicht vergeben, weil:
 
 1. **Vor dem Go-Live (Bedingungen)**
-   - Die CI (Windows, Python 3.15) muss auf diesem Stand grün sein, einschließlich des neuen `quality`-Jobs.
+   - ~~Die CI (Windows, Python 3.15) muss auf diesem Stand grün sein, einschließlich des neuen `quality`-Jobs.~~ Erfüllt am 22.11.2026.
    - Der Anwender ergänzt die Verfahrensdokumentation (`docs/VERFAHRENSDOKUMENTATION.md`, Abschnitte „vom Anwender auszufüllen“)
      und stimmt sie mit seinem Steuerberater ab, ebenso die steuerliche Einordnung seiner Fälle (z. B. Kleinunternehmer, § 13b).
    - Er legt ein Datensicherungsverfahren fest: Backup mindestens monatlich und nach jedem Festschreiben des Kassenbuchs, verschlüsselt
