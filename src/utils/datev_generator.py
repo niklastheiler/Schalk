@@ -26,7 +26,17 @@ class DatevGenerator:
                 zipf.write(source, arcname)
         return True
 
+    @staticmethod
+    def exportable_invoices(db_controller: DBController) -> list:
+        """
+        Paid, issued invoices. Cancelled invoices are left out together with their Stornorechnung: both cancel
+        each other out and are not handed to the tax advisor.
+        """
+        return [i for i in db_controller.get_invoices() if db_controller.is_finalized(i) and i.status == "Bezahlt"
+                and not i.cancels_invoice_id]
+
     def generate_export(self, invoices: list, filepath: str) -> bool:
+        invoices = [i for i in invoices if i.status != "Storniert" and not i.cancels_invoice_id]
         try:
             files = {f"Rechnung_{i.invoice_number}.pdf": build_invoice_pdf(self.db_controller, i) for i in invoices}
             return self._write_zip(filepath, files)

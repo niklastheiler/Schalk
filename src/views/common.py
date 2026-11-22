@@ -156,6 +156,12 @@ class Column:
     icon_svg: Optional[str] = None
     on_click: Optional[Callable[[Any], None]] = None
     tooltip: Optional[str] = None
+    # Icon columns: enabled(record) False draws the icon greyed out and ignores clicks (disabled_tooltip explains why)
+    enabled: Optional[Callable[[Any], bool]] = None
+    disabled_tooltip: Optional[str] = None
+
+    def is_enabled(self, record) -> bool:
+        return self.enabled is None or record is None or bool(self.enabled(record))
 
 
 _NUMBER_RE = re.compile(r"(\d+)")
@@ -258,7 +264,8 @@ class RecordTableModel(QAbstractTableModel):
         if role == Qt.TextAlignmentRole:
             return int(self.columns[col].align)
         if role == Qt.ToolTipRole:
-            return self.columns[col].tooltip
+            column = self.columns[col]
+            return column.tooltip if column.is_enabled(self._rows[row]) else (column.disabled_tooltip or column.tooltip)
         if role == Qt.BackgroundRole and self.row_color:
             color = self.row_color(self._rows[row])
             return QBrush(color) if color else None
@@ -342,20 +349,31 @@ ROCKET_SVG = (
     '<path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>'
     '<path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>'
     '<path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>')
-ACTION_ICON_SIZE = 18
+# Document with a "PDF" label (outline after Lucide "file", ISC license), {color} is filled in when drawing
+PDF_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M15 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M15 2v7h7"/>'
+    '<rect x="1" y="11" width="16" height="8" rx="1.5" fill="{color}" stroke="none"/>'
+    '<text x="9" y="17.4" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="6.8" '
+    'font-weight="bold" fill="#FFFFFF" stroke="none">PDF</text></svg>')
+ACTION_ICON_SIZE = 20
+# Icon of an action that is not possible for this record (e.g. the PDF of an invoice draft)
+DISABLED_ICON_COLOR = "#B4B4B4"
 
 
 class ActionDelegate(TableItemDelegate):
     """Draws a clickable icon in every cell of one column; ListPage handles the click."""
 
-    def __init__(self, svg: str, table):
+    def __init__(self, column, table):
         super().__init__(table)
-        self._svg = svg
+        self._column = column
+        self._svg = column.icon_svg
         self._row_state = table.delegate # tracks hover/selection for the whole row
-        self._renderers = {} # theme color -> QSvgRenderer
+        self._renderers = {} # color -> QSvgRenderer
 
-    def _renderer(self) -> QSvgRenderer:
-        color = themeColor().name()
+    def _renderer(self, enabled: bool = True) -> QSvgRenderer:
+        color = themeColor().name() if enabled else DISABLED_ICON_COLOR
         renderer = self._renderers.get(color)
         if renderer is None:
             renderer = self._renderers[color] = QSvgRenderer(QByteArray(self._svg.format(color=color).encode()))
@@ -367,7 +385,8 @@ class ActionDelegate(TableItemDelegate):
         super().paint(painter, option, index)
         center = QRectF(option.rect).center()
         half = ACTION_ICON_SIZE / 2
-        self._renderer().render(painter, QRectF(center.x() - half, center.y() - half, ACTION_ICON_SIZE, ACTION_ICON_SIZE))
+        enabled = self._column.is_enabled(index.data(RECORD_ROLE))
+        self._renderer(enabled).render(painter, QRectF(center.x() - half, center.y() - half, ACTION_ICON_SIZE, ACTION_ICON_SIZE))
 
 
 class RecordFilterProxy(QSortFilterProxyModel):
@@ -479,7 +498,7 @@ class ListPage(QWidget):
             if column.choices:
                 self.table.setItemDelegateForColumn(i, ChoiceDelegate(column, self.table))
             elif column.icon_svg:
-                self.table.setItemDelegateForColumn(i, ActionDelegate(column.icon_svg, self.table))
+                self.table.setItemDelegateForColumn(i, ActionDelegate(column, self.table))
         self.table.clicked.connect(self._on_cell_clicked)
         self.table.doubleClicked.connect(self._on_cell_double_clicked)
         self.vBoxLayout.addWidget(self.table)
@@ -494,7 +513,7 @@ class ListPage(QWidget):
         column = self.model.columns[index.column()]
         if column.choices:
             self.table.edit(index) # opens the drop-down
-        elif column.on_click:
+        elif column.on_click and column.is_enabled(index.data(RECORD_ROLE)):
             column.on_click(index.data(RECORD_ROLE))
 
     def _on_cell_double_clicked(self, index):

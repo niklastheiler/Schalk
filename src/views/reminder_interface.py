@@ -6,7 +6,8 @@ from src.controllers.db_controller import DBController, GoBDError
 from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_RED, COLOR_YELLOW, Column, ListPage, fmt_date, fmt_money, notify_error, notify_success, open_document
+from src.views.common import (COLOR_RED, COLOR_YELLOW, PDF_SVG, Column, ListPage, fmt_date, fmt_money, notify_error, notify_success,
+                              open_document)
 from src.views.invoice_interface import RIGHT, _naive, add_action
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ class ReminderInterface(ListPage):
             Column("Fällig seit", lambda i: fmt_date(c.get_due_date(i)), sort=lambda i: c.get_due_date(i), width=110),
             Column("Mahnstufe", lambda i: str(i.reminder_level or 0), sort=lambda i: i.reminder_level or 0, width=90, descending=True),
             Column("Nächste Mahnung", self._next_text, width=200),
+            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Letzte Mahnung drucken",
+                   enabled=lambda i: bool(i.reminder_level), disabled_tooltip="Noch keine Mahnung erstellt",
+                   on_click=lambda i: self.generate_reminder(i.id, i.reminder_level, print_only=True)),
         ]
         super().__init__("Mahnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          row_color=lambda i: COLOR_RED if self._next_level(i) else COLOR_YELLOW, parent=parent)

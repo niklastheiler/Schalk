@@ -8,7 +8,7 @@ from src.controllers.db_controller import UNPAID_STATUSES, DBController, GoBDErr
 from src.utils import paths
 from src.utils.invoice_documents import build_invoice_pdf, export_xrechnung
 from src.utils.signal_bus import SignalBus
-from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, Column, ListPage, confirm, fmt_date,
+from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, PDF_SVG, Column, ListPage, confirm, fmt_date,
                               fmt_money, notify_error, notify_success, open_document, show_message)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _german_number, _number_validator, _parse_number
@@ -87,6 +87,9 @@ class InvoiceListPage(ListPage):
             Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i) if self._due_text(i) else None, width=110),
             Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
                    on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
+            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Rechnung drucken",
+                   enabled=c.is_finalized, disabled_tooltip="Erst nach dem Festschreiben (Status „Offen“) druckbar",
+                   on_click=lambda invoice: interface.print_pdf(invoice.id)),
         ]
         super().__init__("Kundenrechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)
@@ -130,8 +133,6 @@ class InvoiceListPage(ListPage):
         add_action(menu, FIF.PRINT, "Drucken", lambda: interface.print_pdf(invoice.id))
         if finalized:
             add_action(menu, FIF.CODE, "XRechnung (XML) exportieren...", lambda: interface.export_xrechnung(invoice.id))
-        if invoice.archived_at is None:
-            add_action(menu, FIF.FOLDER, "Archivieren", lambda: interface.archive(invoice.id))
         if not finalized:
             add_action(menu, FIF.DELETE, "Entwurf löschen", lambda: interface.delete(invoice.id))
         elif invoice.status != "Storniert" and not invoice.cancels_invoice_id:
@@ -237,19 +238,6 @@ class InvoiceInterface(QWidget):
         notify_success(self, "XRechnung exportiert", target)
 
     # --- Actions ---
-    def archive(self, invoice_id):
-        invoice = self.db_controller.get_invoice(invoice_id)
-        if not self.db_controller.is_finalized(invoice) and not confirm(
-                self, "Rechnung festschreiben",
-                "Beim Archivieren wird die Rechnung festgeschrieben und erhält ihre endgültige Rechnungsnummer. "
-                "Danach ist sie nicht mehr änderbar.\n\nFortfahren?"):
-            return
-        success, message = self.db_controller.archive_invoice(invoice_id)
-        if success:
-            notify_success(self, "Archiviert", "Rechnung wurde archiviert.")
-        else:
-            show_message(self, "Nicht archiviert", message)
-
     def record_payment(self, invoice_id, full: bool = True):
         """Asks for amount and date of a payment; the status then follows from the paid sum."""
         invoice = self.db_controller.get_invoice_header(invoice_id)
@@ -311,10 +299,10 @@ class InvoiceInterface(QWidget):
 
     def show_datev_export_dialog(self):
         from src.utils.datev_generator import DatevGenerator
-        exportable = [i for i in self.db_controller.get_invoices() if i.archived_at and i.status in ("Bezahlt", "Storniert")]
+        exportable = DatevGenerator.exportable_invoices(self.db_controller)
         months = sorted({i.invoice_date.strftime("%Y-%m") for i in exportable}, reverse=True)
         if not months:
-            notify_error(self, "Keine Daten", "Es gibt keine archivierten bezahlten oder stornierten Rechnungen zum Exportieren.")
+            notify_error(self, "Keine Daten", "Es gibt keine bezahlten Rechnungen zum Exportieren.")
             return
         dialog = MonthDialog("DATEV Monats-Export (Belege)", months, self.window())
         if not dialog.exec():

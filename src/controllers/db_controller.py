@@ -1117,24 +1117,6 @@ class DBController:
             self._commit(session, invoices=[invoice_id])
             return True
 
-    def archive_invoice(self, invoice_id: int, user: str = None):
-        """Returns (success, message)."""
-        try:
-            with self.get_session() as session:
-                invoice = session.get(Invoice, invoice_id)
-                if not invoice or invoice.archived_at:
-                    return False, "Rechnung ist bereits archiviert."
-                if not self.is_finalized(invoice):
-                    self._finalize(session, invoice, user)
-                    if invoice.status == "Entwurf":
-                        invoice.status = "Offen"
-                invoice.archived_at = datetime.now(timezone.utc)
-                self._log(session, "Invoice", invoice.id, "Archived", user)
-                self._commit(session, invoices=[invoice_id])
-                return True, ""
-        except GoBDError as e:
-            return False, str(e)
-
     def store_invoice_pdf(self, invoice_id: int, generated_pdf: str) -> str:
         """Archives the PDF of a finalized invoice exactly as issued. Returns the archive path."""
         with self.get_session() as session:
