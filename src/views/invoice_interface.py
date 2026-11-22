@@ -1,7 +1,7 @@
 import logging
 import shutil
 from datetime import datetime, timezone
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFileDialog, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import Action, BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, MessageBoxBase, RoundMenu, SubtitleLabel
 from src.controllers.db_controller import UNPAID_STATUSES, DBController, GoBDError
@@ -9,14 +9,12 @@ from src.utils import paths
 from src.utils.invoice_documents import build_invoice_pdf, export_xrechnung
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, PDF_SVG, Column, ListPage, confirm, fmt_date,
-                              fmt_money, notify_error, notify_success, open_document, show_message)
+                              fmt_money, notify_error, notify_success, open_document, show_message, ask_discard_changes)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _german_number, _number_validator, _parse_number
 from src.views.invoice_editor import InvoiceEditor
 
 logger = logging.getLogger(__name__)
-
-RIGHT = Qt.AlignRight | Qt.AlignVCenter
 
 
 def _naive(value):
@@ -83,7 +81,7 @@ class InvoiceListPage(ListPage):
             Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: (_naive(i.invoice_date), i.id), width=115, descending=True),
             Column("Rechnungsnummer", self._number_text, width=180, descending=True),
             Column("Kunde", c.customer_display_name),
-            Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, align=RIGHT, descending=True),
+            Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, descending=True),
             Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i) if self._due_text(i) else None, width=110),
             Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
                    on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
@@ -165,7 +163,7 @@ class InvoiceInterface(QWidget):
         self.list_page = InvoiceListPage(self)
         self.editor = InvoiceEditor(db_controller)
         self.editor.saved.connect(self._on_saved)
-        self.editor.canceled.connect(self.show_list)
+        self.editor.canceled.connect(self.leave_editor)
         self.stackedWidget.addWidget(self.list_page)
         self.stackedWidget.addWidget(self.editor)
 
@@ -178,7 +176,24 @@ class InvoiceInterface(QWidget):
             self.editor.load_invoice(invoice_id)
         else:
             self.editor.clear_form()
+        self.editor.mark_clean()
         self.stackedWidget.setCurrentWidget(self.editor)
+
+    # --- Unsaved changes (asked by the main window before switching tabs) ---
+    def has_unsaved_changes(self) -> bool:
+        return (self.stackedWidget.currentWidget() is self.editor and not self.editor._read_only
+                and self.editor.has_unsaved_changes())
+
+    def discard_changes(self):
+        self.editor.clear_form()
+        self.editor.mark_clean()
+        self.show_list()
+
+    def leave_editor(self):
+        """"Zurück": asks first if something was typed."""
+        if self.has_unsaved_changes() and not ask_discard_changes(self):
+            return
+        self.discard_changes()
 
     def _on_saved(self, invoice_id):
         notify_success(self, "Gespeichert", "Rechnung wurde gespeichert.")

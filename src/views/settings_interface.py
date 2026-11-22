@@ -19,7 +19,7 @@ from src.utils.backup import create_backup, restore_backup
 from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, DOCUMENT_COLORS
 from src.utils.signal_bus import SignalBus
 from src.version import APP_AUTHOR, APP_NAME, APP_VERSION
-from src.views.common import confirm, make_scrollable, notify_error, notify_success, show_message
+from src.views.common import UnsavedChanges, confirm, make_scrollable, notify_error, notify_success, show_message
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class GoBDExportDialog(MessageBoxBase):
         return None if text == ALL_YEARS else int(text)
 
 
-class SettingsInterface(QWidget):
+class SettingsInterface(UnsavedChanges, QWidget):
     integrityChecked = Signal(list)
     updateCheckRequested = Signal()
     backupFinished = Signal(str, str) # path, error message ("" = success)
@@ -278,6 +278,10 @@ class SettingsInterface(QWidget):
         color = self.db_controller.get_setting("document_color", DEFAULT_DOCUMENT_COLOR)
         self.documentColorCombo.setCurrentText(color if color in DOCUMENT_COLORS else DEFAULT_DOCUMENT_COLOR)
         self.paymentTermsEdit.setText(str(self.db_controller.get_payment_terms()))
+        self.mark_clean()
+
+    def discard_changes(self):
+        self.load_settings()
 
     def _validate(self, values: dict) -> list:
         problems = []
@@ -324,6 +328,7 @@ class SettingsInterface(QWidget):
         })
         # One save for all values (each save re-encrypts the whole database)
         self.db_controller.set_settings(values)
+        self.mark_clean()
         notify_success(self, "Gespeichert", "Die Einstellungen wurden gespeichert.")
 
     def select_logo(self):

@@ -13,7 +13,7 @@ from src.utils.signal_bus import SignalBus
 from src.utils.validation import contact_problems, german_postal_code_validator, postal_code_validator
 from src.utils.tax import (TAX_RATE_OPTIONS, EXEMPTION_REASON_PRESETS, EXEMPTION_REQUIRED_MESSAGE, format_rate,
                            has_zero_rate)
-from src.views.common import fmt_money, make_scrollable, notify_error, use_classic_scrollbars
+from src.views.common import UnsavedChanges, fmt_money, make_scrollable, notify_error, use_classic_scrollbars
 
 SMALL_BUSINESS_REASON = EXEMPTION_REASON_PRESETS[0]
 
@@ -47,7 +47,7 @@ def _number_validator() -> QDoubleValidator:
     return validator
 
 
-class DocumentEditor(QWidget):
+class DocumentEditor(UnsavedChanges, QWidget):
     saved = Signal(int)
     canceled = Signal()
 
@@ -320,7 +320,9 @@ class DocumentEditor(QWidget):
         for row in range(self.table.rowCount()):
             for col in range(COL_DELETE):
                 self.table.cellWidget(row, col).setEnabled(not read_only)
-            self.table.cellWidget(row, COL_DELETE).setVisible(not read_only)
+            self.table.cellWidget(row, COL_DELETE).setEnabled(not read_only)
+        # The table shows its cell widgets again on every layout, so hiding the buttons alone does not last
+        self.table.setColumnHidden(COL_DELETE, read_only)
 
     # --- Items ---
     def add_item_row(self, item=None):
@@ -335,6 +337,9 @@ class DocumentEditor(QWidget):
         unit_edit = LineEdit(parent)
         price_edit = LineEdit(parent)
         price_edit.setValidator(_number_validator())
+        # Short values centered like the cells of the lists; the item name stays left-aligned for typing
+        for edit in (qty_edit, unit_edit, price_edit):
+            edit.setAlignment(Qt.AlignCenter)
         tax_combo = ComboBox(parent)
         for rate in TAX_RATE_OPTIONS:
             tax_combo.addItem(format_rate(rate), userData=rate)
@@ -364,7 +369,7 @@ class DocumentEditor(QWidget):
         for col, widget in ((COL_TITLE, title_edit), (COL_QTY, qty_edit), (COL_UNIT, unit_edit), (COL_PRICE, price_edit), (COL_TAX, tax_combo)):
             widget.setEnabled(not self._read_only)
             self.table.setCellWidget(row, col, widget)
-        delete_btn.setVisible(not self._read_only)
+        delete_btn.setEnabled(not self._read_only)
         self.table.setCellWidget(row, COL_DELETE, delete_btn)
 
         # Connected only now: the totals read all cells of the row

@@ -14,7 +14,7 @@ from src.utils.pdf_text_guess import guess_from_pdf
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
-from src.views.invoice_interface import RIGHT, add_action
+from src.views.invoice_interface import add_action
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class IncomingInvoiceInterface(ListPage):
             Column("Lieferant", lambda i: i.supplier_name or "", width=220),
             Column("Rechnungs-Nr.", lambda i: i.invoice_number or "", width=150),
             Column("Beschreibung", lambda i: i.description + (" (storniert)" if i.cancelled_at else "")),
-            Column("Betrag", lambda i: fmt_money(i.amount), sort=lambda i: i.amount, width=120, align=RIGHT, descending=True),
+            Column("Betrag", lambda i: fmt_money(i.amount), sort=lambda i: i.amount, width=120, descending=True),
             Column("Format", lambda i: i.einvoice_format or "PDF/Scan", width=170),
         ]
         super().__init__(self.TITLES[invoice_type], columns, (SignalBus.get().incomingInvoicesChanged,),

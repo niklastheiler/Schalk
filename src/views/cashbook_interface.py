@@ -9,15 +9,16 @@ from src.utils import paths
 from src.utils.archive import is_pdf
 from src.utils.receipt_recognition import INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
+from src.views.common import (COLOR_GREY, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
+                              notify_success, open_document)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
-from src.views.invoice_interface import RIGHT, MonthDialog, add_action
+from src.views.invoice_interface import MonthDialog, add_action
 
 logger = logging.getLogger(__name__)
 
 
-class CashbookInterface(ListPage):
+class CashbookInterface(UnsavedChanges, ListPage):
     def __init__(self, db_controller: DBController, parent=None):
         self.db_controller = c = db_controller
         self.attachment_path = ""
@@ -28,7 +29,7 @@ class CashbookInterface(ListPage):
             Column("Beleg-Nr", lambda e: e.receipt_number or "Entwurf", sort=lambda e: e.receipt_number or "~", width=150, descending=True),
             Column("Art", lambda e: e.entry_type + (" (Storno)" if e.is_storno else ""), width=190),
             Column("Beschreibung", lambda e: e.description or ""),
-            Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, align=RIGHT, descending=True),
+            Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, descending=True),
             Column("GoBD-Hash", lambda e: f"{e.hash_chain[:8]}…{e.hash_chain[-8:]}" if e.hash_chain else "–", width=170),
             Column("Beleg", lambda e: "Vorhanden" if e.attachment_path else "-", width=90),
         ]
@@ -39,6 +40,7 @@ class CashbookInterface(ListPage):
         self.finalizeBtn = self.add_header_button("Festschreiben", self.finalize_cashbook)
         self.addBtn = self.add_header_button("Eintrag hinzufügen", self.add_entry, primary=True)
         self._build_form()
+        self.mark_clean()
 
     def _build_form(self):
         form = QHBoxLayout()
@@ -90,6 +92,17 @@ class CashbookInterface(ListPage):
 
     def records(self) -> list:
         return self.db_controller.get_cashbook_entries()
+
+    # --- Unsaved changes: only the entry form counts, not search and filters ---
+    def unsaved_fields(self) -> list:
+        return [self.datePicker, self.amountEdit, self.descEdit, self.typeCombo]
+
+    def extra_state(self) -> tuple:
+        return (self.attachment_path,)
+
+    def discard_changes(self):
+        self.datePicker.setDate(QDate.currentDate())
+        self.reset_form()
 
     def on_refreshed(self, records: list):
         self._cancelled = self.db_controller.cancelled_cashbook_ids()
@@ -183,6 +196,7 @@ class CashbookInterface(ListPage):
         self.addBtn.setText("Änderung speichern")
         self.cancelEditBtn.show()
         self.amountEdit.setFocus()
+        self.mark_clean()
 
     def reset_form(self):
         self.editing_id = None
@@ -192,6 +206,7 @@ class CashbookInterface(ListPage):
         self.attachLabel.setText("Kein Anhang")
         self.addBtn.setText("Eintrag hinzufügen")
         self.cancelEditBtn.hide()
+        self.mark_clean()
 
     def delete_entry(self, entry_id):
         entry = self.db_controller.get_cashbook_entry(entry_id)

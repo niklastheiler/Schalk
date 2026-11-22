@@ -7,8 +7,8 @@ from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREEN, COLOR_GREY, PDF_SVG, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money,
-                              notify_error, notify_success, open_document)
-from src.views.invoice_interface import RIGHT, _naive, add_action
+                              notify_error, notify_success, open_document, ask_discard_changes)
+from src.views.invoice_interface import _naive, add_action
 from src.views.quote_editor import QuoteEditor
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ class QuoteListPage(ListPage):
             Column("Datum", lambda q: fmt_date(q.quote_date), sort=lambda q: (_naive(q.quote_date), q.id), width=115, descending=True),
             Column("Angebotsnummer", lambda q: q.quote_number, width=160, descending=True),
             Column("Kunde", c.customer_display_name),
-            Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT, descending=True),
+            Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, descending=True),
             Column("Status", lambda q: q.status + (" (archiviert)" if q.archived_at else ""), width=170),
             Column("", lambda q: "", width=56, icon_svg=PDF_SVG, tooltip="Angebot drucken",
                    on_click=lambda q: interface.open_pdf(q.id, print_only=True)),
@@ -80,7 +80,7 @@ class QuoteInterface(QWidget):
         self.list_page = QuoteListPage(self)
         self.editor = QuoteEditor(db_controller)
         self.editor.saved.connect(self._on_saved)
-        self.editor.canceled.connect(self.show_list)
+        self.editor.canceled.connect(self.leave_editor)
         self.stackedWidget.addWidget(self.list_page)
         self.stackedWidget.addWidget(self.editor)
 
@@ -92,7 +92,24 @@ class QuoteInterface(QWidget):
             self.editor.load_quote(quote_id)
         else:
             self.editor.clear_form()
+        self.editor.mark_clean()
         self.stackedWidget.setCurrentWidget(self.editor)
+
+    # --- Unsaved changes (asked by the main window before switching tabs) ---
+    def has_unsaved_changes(self) -> bool:
+        return (self.stackedWidget.currentWidget() is self.editor and not self.editor._read_only
+                and self.editor.has_unsaved_changes())
+
+    def discard_changes(self):
+        self.editor.clear_form()
+        self.editor.mark_clean()
+        self.show_list()
+
+    def leave_editor(self):
+        """"Zurück": asks first if something was typed."""
+        if self.has_unsaved_changes() and not ask_discard_changes(self):
+            return
+        self.discard_changes()
 
     def _on_saved(self, quote_id):
         notify_success(self, "Gespeichert", "Angebot wurde gespeichert.")

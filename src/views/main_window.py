@@ -7,6 +7,7 @@ from src.utils import paths
 from src.utils.pdf_generator import DEFAULT_DOCUMENT_COLOR, document_color
 from src.utils.signal_bus import SignalBus
 from src.views.analysis_interface import AnalysisInterface
+from src.views.common import ask_discard_changes
 from src.views.cashbook_interface import CashbookInterface
 from src.views.customer_interface import CustomerInterface
 from src.views.incoming_invoice_interface import IncomingInvoiceInterface
@@ -49,6 +50,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.analysis_interface, FIF.PIE_SINGLE, 'Auswertung')
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
+        self._guard_tab_changes()
 
         self.updates = UpdateNotifier(self)
         self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
@@ -85,9 +87,42 @@ class MainWindow(FluentWindow):
             self._navigation_expanded = True
             QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
 
+    def _guard_tab_changes(self):
+        """
+        Before leaving a tab with unsaved input the user decides: discard (the input is reset and the new tab
+        opens) or stay (nothing changes, the menu keeps the current tab selected). Installed on the stacked
+        widget itself, so the menu, the back arrow and programmatic switches are all covered.
+        """
+        stacked = self.stackedWidget
+        switch = stacked.setCurrentWidget
+
+        def guarded(widget, popOut=True):
+            current = stacked.currentWidget()
+            if widget is not current and current is not None and not self.leave_allowed(current):
+                self.navigationInterface.setCurrentItem(current.objectName())
+                return
+            switch(widget, popOut)
+        stacked.setCurrentWidget = guarded
+
+    def switchTo(self, interface) -> bool:
+        """Switches the tab; False if the user stayed because of unsaved input."""
+        super().switchTo(interface)
+        return self.stackedWidget.currentWidget() is interface
+
+    def leave_allowed(self, view) -> bool:
+        if not getattr(view, "has_unsaved_changes", None) or not view.has_unsaved_changes():
+            return True
+        if not ask_discard_changes(self):
+            return False
+        view.discard_changes()
+        return True
+
     def open_invoice(self, invoice_id: int):
+        # First the tab (which may ask about unsaved input), then the invoice: an open draft in the invoice
+        # editor is not replaced without asking either
+        if not self.switchTo(self.invoice_interface) or not self.leave_allowed(self.invoice_interface):
+            return
         self.invoice_interface.show_editor(invoice_id)
-        self.switchTo(self.invoice_interface)
 
     def backup_due(self) -> bool:
         """True if no backup was made in the current month yet."""

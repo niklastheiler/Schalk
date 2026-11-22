@@ -5,7 +5,7 @@ from stdnum.eu import vat as stdnum_vat
 from src.controllers.db_controller import DBController
 from src.utils.signal_bus import SignalBus
 from src.utils.validation import contact_problems, german_postal_code_validator, phone_validator, postal_code_validator
-from src.views.common import Column, ListPage, confirm, make_scrollable, notify_error, notify_success
+from src.views.common import Column, ListPage, UnsavedChanges, ask_discard_changes, confirm, make_scrollable, notify_error, notify_success
 from src.views.invoice_interface import add_action
 
 
@@ -30,7 +30,7 @@ def customer_problems(values: dict) -> list:
     return problems
 
 
-class CustomerEditor(QWidget):
+class CustomerEditor(UnsavedChanges, QWidget):
     saved = Signal(int)
     canceled = Signal()
 
@@ -164,7 +164,7 @@ class CustomerInterface(QWidget):
         self.list_page = CustomerListPage(self)
         self.editor = CustomerEditor(db_controller)
         self.editor.saved.connect(self._on_saved)
-        self.editor.canceled.connect(self.show_list)
+        self.editor.canceled.connect(self.leave_editor)
         self.stackedWidget.addWidget(self.list_page)
         self.stackedWidget.addWidget(self.editor)
 
@@ -176,7 +176,23 @@ class CustomerInterface(QWidget):
             self.editor.load_customer(customer_id)
         else:
             self.editor.clear_form()
+        self.editor.mark_clean()
         self.stackedWidget.setCurrentWidget(self.editor)
+
+    # --- Unsaved changes (asked by the main window before switching tabs) ---
+    def has_unsaved_changes(self) -> bool:
+        return self.stackedWidget.currentWidget() is self.editor and self.editor.has_unsaved_changes()
+
+    def discard_changes(self):
+        self.editor.clear_form()
+        self.editor.mark_clean()
+        self.show_list()
+
+    def leave_editor(self):
+        """"Zurück": asks first if something was typed."""
+        if self.has_unsaved_changes() and not ask_discard_changes(self):
+            return
+        self.discard_changes()
 
     def _on_saved(self, customer_id):
         notify_success(self, "Gespeichert", "Kunde wurde gespeichert.")

@@ -8,7 +8,7 @@ from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_RED, COLOR_YELLOW, PDF_SVG, Column, ListPage, fmt_date, fmt_money, notify_error, notify_success,
                               open_document)
-from src.views.invoice_interface import RIGHT, _naive, add_action
+from src.views.invoice_interface import _naive, add_action
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class ReminderInterface(ListPage):
             Column("Datum", lambda i: fmt_date(i.invoice_date), sort=lambda i: (_naive(i.invoice_date), i.id), width=115, descending=True),
             Column("Rechnungsnummer", lambda i: i.invoice_number, width=160, descending=True),
             Column("Kunde", c.customer_display_name),
-            Column("Offen", lambda i: fmt_money(c.outstanding_amount(i)), sort=c.outstanding_amount, width=130, align=RIGHT, descending=True),
+            Column("Offen", lambda i: fmt_money(c.outstanding_amount(i)), sort=c.outstanding_amount, width=130, descending=True),
             Column("Fällig seit", lambda i: fmt_date(c.get_due_date(i)), sort=lambda i: c.get_due_date(i), width=110),
             Column("Mahnstufe", lambda i: str(i.reminder_level or 0), sort=lambda i: i.reminder_level or 0, width=90, descending=True),
             Column("Nächste Mahnung", self._next_text, width=200),
