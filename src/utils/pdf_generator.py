@@ -548,7 +548,7 @@ class PDFGenerator:
 
         elements = self._title(f"{level}. Mahnung")
         elements += self._text("Sehr geehrte Damen und Herren,", texts[0])
-        # After a partial payment only the rest is demanded
+        # Only what is still open is demanded
         outstanding = c.outstanding_amount(invoice)
         rows = [
             [self._p("Rechnung", "head"), self._p("Rechnungsdatum", "head"), self._p("Fällig seit", "head"),

@@ -3,7 +3,7 @@ import shutil
 from datetime import datetime, timezone
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QFileDialog, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import Action, BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, MessageBoxBase, RoundMenu, SubtitleLabel
+from qfluentwidgets import Action, BodyLabel, ComboBox, FluentIcon as FIF, MessageBoxBase, RoundMenu, SubtitleLabel
 from src.controllers.db_controller import UNPAID_STATUSES, DBController, GoBDError
 from src.utils import paths
 from src.utils.invoice_documents import build_invoice_pdf, export_xrechnung
@@ -11,7 +11,6 @@ from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREEN, COLOR_GREY, COLOR_RED, COLOR_YELLOW, PDF_SVG, Column, ListPage, confirm, fmt_date,
                               fmt_money, notify_error, notify_success, open_document, show_message, ask_discard_changes)
 from src.views.date_picker import GermanDatePicker
-from src.views.document_editor import _german_number, _number_validator, _parse_number
 from src.views.invoice_editor import InvoiceEditor
 
 logger = logging.getLogger(__name__)
@@ -38,38 +37,23 @@ class MonthDialog(MessageBoxBase):
 
 
 class PaymentDialog(MessageBoxBase):
-    """Amount and date of a payment received; the status (Teilbezahlt/Bezahlt) follows from the amount."""
+    """Date of the payment; it always settles the whole invoice (there are no partial payments)."""
 
-    def __init__(self, invoice, outstanding: float, full: bool, parent=None):
+    def __init__(self, invoice, amount: float, parent=None):
         super().__init__(parent)
-        self.viewLayout.addWidget(SubtitleLabel(f"Zahlung zu Rechnung {invoice.invoice_number}", self))
-        self.viewLayout.addWidget(BodyLabel(
-            f"Rechnungsbetrag {fmt_money(invoice.gross_amount)}, bereits bezahlt {fmt_money(invoice.paid_amount or 0.0)}, "
-            f"offen {fmt_money(outstanding)}", self))
-        self.viewLayout.addWidget(BodyLabel("Gezahlter Betrag", self))
-        self.amountEdit = LineEdit(self)
-        self.amountEdit.setValidator(_number_validator())
-        self.amountEdit.setPlaceholderText("0,00")
-        if full:
-            self.amountEdit.setText(_german_number(outstanding))
-        self.viewLayout.addWidget(self.amountEdit)
+        self.viewLayout.addWidget(SubtitleLabel(f"Rechnung {invoice.invoice_number} bezahlt", self))
+        self.viewLayout.addWidget(BodyLabel(f"Betrag: {fmt_money(amount)}", self))
         self.viewLayout.addWidget(BodyLabel("Zahlungseingang am", self))
         self.datePicker = GermanDatePicker(self)
         self.datePicker.setDate(QDate.currentDate())
         self.viewLayout.addWidget(self.datePicker)
-        self.yesButton.setText("Zahlung erfassen")
+        self.yesButton.setText("Als bezahlt markieren")
         self.cancelButton.setText("Abbrechen")
-        self.widget.setMinimumWidth(420)
-
-    def amount(self) -> float:
-        return _parse_number(self.amountEdit.text(), 0.0)
+        self.widget.setMinimumWidth(380)
 
     def payment_date(self) -> datetime:
         d = self.datePicker.date
         return datetime(d.year(), d.month(), d.day())
-
-    def validate(self) -> bool:
-        return self.amount() > 0
 
 
 class InvoiceListPage(ListPage):
@@ -83,6 +67,8 @@ class InvoiceListPage(ListPage):
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda i: fmt_money(i.gross_amount), sort=lambda i: i.gross_amount, width=130, descending=True),
             Column("Fällig am", self._due_text, sort=lambda i: c.get_due_date(i) if self._due_text(i) else None, width=110),
+            Column("Bezahlt am", lambda i: fmt_date(i.paid_at) if i.paid_at and i.status == "Bezahlt" else "",
+                   sort=lambda i: _naive(i.paid_at) if i.paid_at and i.status == "Bezahlt" else None, width=110),
             Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
                    on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
             Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Rechnung drucken",
@@ -111,7 +97,7 @@ class InvoiceListPage(ListPage):
             return COLOR_GREY
         if invoice.status == "Überfällig":
             return COLOR_RED
-        if invoice.status in ("Offen", "Teilbezahlt") and (self.c.get_due_date(invoice) - datetime.now()).days < 7:
+        if invoice.status == "Offen" and (self.c.get_due_date(invoice) - datetime.now()).days < 7:
             return COLOR_YELLOW
         return None
 
@@ -136,7 +122,7 @@ class InvoiceListPage(ListPage):
         elif invoice.status != "Storniert" and not invoice.cancels_invoice_id:
             add_action(menu, FIF.CANCEL, "Stornieren", lambda: interface.change_status(invoice.id, "Storniert"))
         if finalized and invoice.status in UNPAID_STATUSES and not invoice.cancels_invoice_id:
-            add_action(menu, FIF.ACCEPT, "Zahlung erfassen...", lambda: interface.record_payment(invoice.id, full=True))
+            add_action(menu, FIF.ACCEPT, "Als bezahlt markieren...", lambda: interface.record_payment(invoice.id))
         add_action(menu, FIF.HISTORY, "Verlauf anzeigen", lambda: interface.show_history(invoice.id))
 
         statuses = c.next_invoice_statuses(invoice)
@@ -253,27 +239,31 @@ class InvoiceInterface(QWidget):
         notify_success(self, "XRechnung exportiert", target)
 
     # --- Actions ---
-    def record_payment(self, invoice_id, full: bool = True):
-        """Asks for amount and date of a payment; the status then follows from the paid sum."""
-        invoice = self.db_controller.get_invoice_header(invoice_id)
-        dialog = PaymentDialog(invoice, self.db_controller.outstanding_amount(invoice), full, self.window())
+    def record_payment(self, invoice_id):
+        """Asks for the date the money came in and marks the invoice as paid."""
+        c = self.db_controller
+        invoice = c.get_invoice_header(invoice_id)
+        if c.outstanding_amount(invoice) <= 0: # nothing to pay
+            success, message = c.update_invoice_status(invoice_id, "Bezahlt")
+            if not success:
+                show_message(self, "Nicht möglich", message)
+            return
+        dialog = PaymentDialog(invoice, c.outstanding_amount(invoice), self.window())
         if not dialog.exec():
             return
         try:
-            self.db_controller.record_payment(invoice_id, dialog.amount(), dialog.payment_date())
+            c.record_payment(invoice_id, dialog.payment_date())
         except (GoBDError, ValueError) as e:
             show_message(self, "Zahlung nicht erfasst", str(e))
             return
-        invoice = self.db_controller.get_invoice_header(invoice_id)
-        notify_success(self, "Zahlung erfasst", f"Rechnung {invoice.invoice_number}: {invoice.status}, "
-                                                f"offen {fmt_money(self.db_controller.outstanding_amount(invoice))}.")
+        notify_success(self, "Bezahlt", f"Rechnung {invoice.invoice_number} ist bezahlt.")
 
     def change_status(self, invoice_id, new_status):
         invoice = self.db_controller.get_invoice(invoice_id)
         if not invoice or invoice.status == new_status:
             return
-        if new_status in ("Bezahlt", "Teilbezahlt") and self.db_controller.is_finalized(invoice):
-            self.record_payment(invoice_id, full=new_status == "Bezahlt")
+        if new_status == "Bezahlt" and self.db_controller.is_finalized(invoice):
+            self.record_payment(invoice_id)
             return
         if new_status == "Storniert":
             question = (f"Für Rechnung {invoice.invoice_number} wird eine Stornorechnung mit negativen Beträgen erstellt. "

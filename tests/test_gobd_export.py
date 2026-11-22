@@ -19,7 +19,7 @@ def _data(controller, tmp_path):
     customer_id = c.add_customer(company_name="Kunde AG", address="Weg 2", postal_code="20095", city="Hamburg")
     invoice_id = c.create_invoice(customer_id, DAY, DAY, ITEMS, status="Offen")
     c.create_invoice(customer_id, DAY, DAY, ITEMS) # draft: not exported
-    c.record_payment(invoice_id, 50.0, datetime(2026, 10, 5))
+    c.record_payment(invoice_id, datetime(2026, 10, 5))
     receipt = tmp_path / "beleg.pdf"
     receipt.write_bytes(b"%PDF-1.4 Beleg")
     c.add_cashbook_entry(datetime(2026, 10, 2), 100.0, "Bareinnahme", "", "Einnahme", 19.0, str(receipt))
@@ -41,7 +41,8 @@ def test_export_contains_all_tables_and_documents(controller, seller, tmp_path):
         invoice = controller.get_invoice(invoice_id)
         values = dict(zip(header, row))
         assert values["rechnungsnummer"] == invoice.invoice_number and values["rechnungsdatum"] == "01.10.2026"
-        assert values["brutto"] == f"{invoice.gross_amount:.2f}".replace(".", ",") and values["bezahlt"] == "50,00"
+        assert values["brutto"] == f"{invoice.gross_amount:.2f}".replace(".", ",") and values["bezahlt"] == values["brutto"]
+        assert values["bezahlt_am"] == "05.10.2026"
         # The archived PDF is in the export, byte for byte, and its hash is listed
         assert zipf.read(f"belege/{values['pdf_datei']}") == open(invoice.pdf_path, "rb").read()
         items = _read(zipf, "rechnungspositionen.csv")

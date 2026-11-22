@@ -34,7 +34,7 @@ def _own_invoices(controller) -> dict:
 
 
 def _income(controller, invoice) -> ReceiptGuess:
-    # Cash received for the invoice: what is still open (after a partial payment), otherwise the full amount
+    # Cash received for the invoice: the whole open amount (there are no partial payments)
     amount = controller.outstanding_amount(invoice) or invoice.gross_amount
     customer = controller.customer_display_name(invoice)
     return ReceiptGuess(INCOME, amount, f"Rechnung {invoice.invoice_number} – {customer}".strip(" –"), None, invoice.id)

@@ -54,8 +54,7 @@ class QuoteListPage(ListPage):
         add_action(menu, FIF.SAVE, "PDF speichern unter...", lambda: interface.save_pdf(quote.id))
         add_action(menu, FIF.PRINT, "Drucken", lambda: interface.open_pdf(quote.id, print_only=True))
         add_action(menu, FIF.DOCUMENT, "In Rechnung übernehmen", lambda: interface.convert_to_invoice(quote.id))
-        if not quote.archived_at:
-            add_action(menu, FIF.FOLDER, "Archivieren", lambda: interface.archive(quote.id))
+        if not quote.archived_at: # quotes archived in older versions stay locked
             add_action(menu, FIF.DELETE, "Löschen", lambda: interface.delete(quote.id))
         menu.addSeparator()
         status_menu = RoundMenu("Status ändern", menu)
@@ -163,10 +162,6 @@ class QuoteInterface(QWidget):
         if hasattr(main_window, "open_invoice"):
             main_window.open_invoice(invoice_id)
         notify_success(self, "Rechnungsentwurf erstellt", "Die Positionen des Angebots wurden übernommen.")
-
-    def archive(self, quote_id):
-        if self.db_controller.archive_quote(quote_id):
-            notify_success(self, "Archiviert", "Angebot wurde archiviert.")
 
     def delete(self, quote_id):
         if not confirm(self, "Angebot löschen", "Möchten Sie dieses Angebot wirklich löschen?"):

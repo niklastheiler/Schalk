@@ -2,12 +2,12 @@ import logging
 import os
 from datetime import datetime
 from PySide6.QtCore import QDate, Qt
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, PushButton, RoundMenu, SubtitleLabel, TransparentToolButton
 from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDError
 from src.utils import paths
 from src.utils.archive import is_pdf
-from src.utils.receipt_recognition import INCOME, recognize_receipt
+from src.utils.receipt_recognition import EXPENSE, INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREY, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
                               notify_success, open_document)
@@ -40,6 +40,8 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.finalizeBtn = self.add_header_button("Festschreiben", self.finalize_cashbook)
         self.addBtn = self.add_header_button("Eintrag hinzufügen", self.add_entry, primary=True)
         self._build_form()
+        # New or paid invoices change the selection; the chosen one stays selected
+        SignalBus.get().invoicesChanged.connect(lambda: self._fill_invoice_combo(keep_id=self.invoice_id))
         self.mark_clean()
 
     def _build_form(self):
@@ -57,29 +59,43 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.amountEdit = LineEdit()
         self.amountEdit.setValidator(_number_validator())
         self.amountEdit.setPlaceholderText("0,00")
+        self.amountEdit.setFixedWidth(110)
         labeled("Betrag (€)", self.amountEdit)
         self.descEdit = LineEdit()
         self.descEdit.setPlaceholderText("Buchungstext")
-        self.descEdit.setMinimumWidth(220)
-        labeled("Beschreibung", self.descEdit)
+        self.descEdit.setMinimumWidth(160)
         self.typeCombo = ComboBox()
         self.typeCombo.addItems(CASHBOOK_TYPES)
         labeled("Art", self.typeCombo)
 
+        # Einnahme: an own invoice of this month instead of a receipt (its PDF is the receipt)
+        self.invoice_id = None
+        self.invoiceBox = QWidget()
+        invoice_layout = QVBoxLayout(self.invoiceBox)
+        invoice_layout.setContentsMargins(0, 0, 0, 0)
+        invoice_layout.addWidget(BodyLabel("Rechnung (optional)"))
+        self.invoiceCombo = ComboBox()
+        self.invoiceCombo.setMinimumWidth(180)
+        self.invoiceCombo.setMaximumWidth(260)
+        self.invoiceCombo.currentIndexChanged.connect(self._on_invoice_chosen)
+        invoice_layout.addWidget(self.invoiceCombo)
+
+        # Barentnahme Firma: receipt (optional); Barentnahme Privat has none
+        self.attachBox = QWidget()
+        attach_box = QVBoxLayout(self.attachBox)
+        attach_box.setContentsMargins(0, 0, 0, 0)
         attach = QHBoxLayout()
         self.attachBtn = TransparentToolButton(FIF.LINK)
         self.attachBtn.clicked.connect(self.attach_file)
         self.attachLabel = BodyLabel("Kein Anhang")
         attach.addWidget(self.attachBtn)
         attach.addWidget(self.attachLabel)
-        attach_box = QVBoxLayout()
         attach_box.addWidget(BodyLabel("Beleg (optional)"))
         attach_box.addLayout(attach)
-        form.addLayout(attach_box)
+        self.typeCombo.currentTextChanged.connect(self._on_type_changed)
         self.cancelEditBtn = PushButton("Abbrechen")
         self.cancelEditBtn.clicked.connect(self.reset_form)
         self.cancelEditBtn.hide()
-        form.addWidget(self.cancelEditBtn, 0, Qt.AlignBottom)
         form.addStretch(1)
 
         balance_box = QVBoxLayout()
@@ -87,8 +103,70 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.balanceLabel = SubtitleLabel("0,00 €")
         balance_box.addWidget(self.balanceLabel)
         form.addLayout(balance_box)
-        self.vBoxLayout.insertLayout(1, form)
+        # Second row: description (stretching), invoice or receipt by type, cancel while editing
+        description_box = QVBoxLayout()
+        description_box.setSpacing(4)
+        description_box.addWidget(BodyLabel("Beschreibung"))
+        description_box.addWidget(self.descEdit)
+        description_row = QHBoxLayout()
+        description_row.addLayout(description_box, 1)
+        description_row.addWidget(self.invoiceBox)
+        description_row.addWidget(self.attachBox)
+        description_row.addWidget(self.cancelEditBtn, 0, Qt.AlignBottom)
+        rows = QVBoxLayout()
+        rows.setSpacing(8)
+        rows.addLayout(form)
+        rows.addLayout(description_row)
+        self.vBoxLayout.insertLayout(1, rows)
         self.vBoxLayout.insertSpacing(2, 12)
+        self._fill_invoice_combo()
+        self._on_type_changed(self.typeCombo.currentText())
+
+    # --- Type and invoice ---
+    def _fill_invoice_combo(self, keep_id=None):
+        """Open own invoices of this month; keep_id keeps an invoice of an edited entry in the list."""
+        c = self.db_controller
+        invoices = c.cash_invoices()
+        if keep_id and keep_id not in [i.id for i in invoices] and c.get_invoice_header(keep_id):
+            invoices.insert(0, c.get_invoice_header(keep_id))
+        self.invoiceCombo.blockSignals(True)
+        self.invoiceCombo.clear()
+        self.invoiceCombo.addItem("Ohne Rechnung", userData=None)
+        for invoice in invoices:
+            self.invoiceCombo.addItem(f"{invoice.invoice_number} – {c.customer_display_name(invoice)} "
+                                      f"({fmt_money(c.outstanding_amount(invoice))})", userData=invoice.id)
+        index = self.invoiceCombo.findData(keep_id) if keep_id else 0
+        self.invoiceCombo.setCurrentIndex(max(index, 0))
+        self.invoiceCombo.blockSignals(False)
+
+    def _on_type_changed(self, entry_type: str):
+        income = entry_type == INCOME
+        self.invoiceBox.setVisible(income)
+        self.attachBox.setVisible(entry_type == EXPENSE)
+        if not income and self.invoice_id:
+            self.invoiceCombo.setCurrentIndex(0)
+        if entry_type == "Barentnahme Privat" and self.attachment_path:
+            # A private withdrawal has no receipt
+            self.attachment_path = ""
+            self.attachLabel.setText("Kein Anhang")
+        if income and not self.invoice_id:
+            self.attachment_path = ""
+
+    def _on_invoice_chosen(self, index: int):
+        """Takes over amount, text and the invoice PDF (as receipt) of the chosen invoice."""
+        invoice_id = self.invoiceCombo.itemData(index)
+        self.invoice_id = invoice_id
+        if not invoice_id:
+            self.attachment_path = ""
+            return
+        c = self.db_controller
+        invoice = c.get_invoice(invoice_id)
+        self.amountEdit.setText(f"{c.outstanding_amount(invoice):.2f}".replace(".", ","))
+        self.descEdit.setText(f"Rechnung {invoice.invoice_number} – {c.customer_display_name(invoice)}")
+        try:
+            self.attachment_path = c.get_archived_invoice_pdf(invoice) or ""
+        except GoBDError:
+            self.attachment_path = ""
 
     def records(self) -> list:
         return self.db_controller.get_cashbook_entries()
@@ -98,7 +176,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
         return [self.datePicker, self.amountEdit, self.descEdit, self.typeCombo]
 
     def extra_state(self) -> tuple:
-        return (self.attachment_path,)
+        return (self.attachment_path, self.invoice_id)
 
     def discard_changes(self):
         self.datePicker.setDate(QDate.currentDate())
@@ -152,6 +230,10 @@ class CashbookInterface(UnsavedChanges, ListPage):
         except Exception:
             logger.exception("Beleg %s konnte nicht ausgewertet werden", path)
             return
+        if guess.invoice_id:
+            # Linked first: switching the type to Einnahme keeps the receipt of a linked invoice
+            self._fill_invoice_combo(keep_id=guess.invoice_id)
+            self.invoice_id = guess.invoice_id
         self.typeCombo.setCurrentText(guess.entry_type)
         if guess.amount > 0 and not _parse_number(self.amountEdit.text(), 0.0):
             self.amountEdit.setText(f"{guess.amount:.2f}".replace(".", ","))
@@ -171,6 +253,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
             description=self.descEdit.text().strip(),
             entry_type=self.typeCombo.currentText(),
             attachment_source=self.attachment_path or None,
+            invoice_id=self.invoice_id if self.typeCombo.currentText() == INCOME else None,
         )
         try:
             # The controller archives the receipt read-only under a unique name and checks the balance
@@ -191,6 +274,8 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.amountEdit.setText(f"{entry.amount:.2f}".replace(".", ","))
         self.descEdit.setText(entry.description or "")
         self.typeCombo.setCurrentText(entry.entry_type)
+        self._fill_invoice_combo(keep_id=entry.invoice_id)
+        self.invoice_id = entry.invoice_id
         self.attachment_path = ""
         self.attachLabel.setText(os.path.basename(entry.attachment_path) if entry.attachment_path else "Kein Anhang")
         self.addBtn.setText("Änderung speichern")
@@ -200,6 +285,8 @@ class CashbookInterface(UnsavedChanges, ListPage):
 
     def reset_form(self):
         self.editing_id = None
+        self.invoice_id = None
+        self._fill_invoice_combo()
         self.amountEdit.clear()
         self.descEdit.clear()
         self.attachment_path = ""

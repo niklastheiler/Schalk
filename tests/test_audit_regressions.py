@@ -34,25 +34,25 @@ def _stored_db(c) -> sqlite3.Connection:
 
 
 # --- Payments ---
-def test_partial_and_full_payment_set_the_status(controller, seller):
+def test_payment_settles_the_whole_invoice_with_its_date(controller, seller):
     c = controller
     today = datetime.now(timezone.utc)
     invoice_id = c.create_invoice(_customer(c), today, today, ITEM, status="Offen") # not yet due
-    c.record_payment(invoice_id, 50.0, datetime.now())
+    c.record_payment(invoice_id, datetime(2026, 11, 20))
     invoice = c.get_invoice_header(invoice_id)
-    assert invoice.status == "Teilbezahlt" and c.outstanding_amount(invoice) == 69.0
-    with pytest.raises(ValueError, match="höher als der offene Betrag"):
-        c.record_payment(invoice_id, 70.0, datetime.now())
-    ok, _ = c.update_invoice_status(invoice_id, "Bezahlt") # books the remaining 69,00 €
-    invoice = c.get_invoice_header(invoice_id)
-    assert ok and invoice.status == "Bezahlt" and c.outstanding_amount(invoice) == 0
-    assert [p.amount for p in c.get_payments(invoice_id)] == [50.0, 69.0]
+    assert invoice.status == "Bezahlt" and c.outstanding_amount(invoice) == 0 and invoice.paid_at == datetime(2026, 11, 20)
+    assert [p.amount for p in c.get_payments(invoice_id)] == [119.0]
+    with pytest.raises(ValueError, match="bereits bezahlt"):
+        c.record_payment(invoice_id, datetime(2026, 11, 21))
     assert c.verify_integrity() == []
 
 
-def test_partial_status_needs_an_amount(controller, seller):
-    ok, message = controller.update_invoice_status(_issued(controller), "Teilbezahlt")
-    assert not ok and "Betrag" in message
+def test_there_is_no_partly_paid_status(controller, seller):
+    c = controller
+    invoice_id = _issued(c)
+    assert "Teilbezahlt" not in c.next_invoice_statuses(c.get_invoice_header(invoice_id))
+    ok, _ = c.update_invoice_status(invoice_id, "Teilbezahlt")
+    assert not ok
 
 
 def test_returned_payment_reopens_and_becomes_overdue(controller, seller):
@@ -62,7 +62,7 @@ def test_returned_payment_reopens_and_becomes_overdue(controller, seller):
     assert c.get_invoice_header(invoice_id).status == "Bezahlt"
     ok, _ = c.update_invoice_status(invoice_id, "Offen") # e.g. returned direct debit
     invoice = c.get_invoice_header(invoice_id)
-    assert ok and invoice.paid_amount == 0 and invoice.status == "Überfällig"
+    assert ok and invoice.paid_amount == 0 and invoice.status == "Überfällig" and invoice.paid_at is None
     # Payments are never deleted: the return is a negative entry
     assert [p.amount for p in c.get_payments(invoice_id)] == [119.0, -119.0]
 
@@ -71,42 +71,33 @@ def test_payments_only_for_issued_invoices(controller, seller):
     c = controller
     draft = c.create_invoice(_customer(c), DAY, DAY, ITEM)
     with pytest.raises(GoBDError):
-        c.record_payment(draft, 10.0, datetime(2026, 10, 2))
+        c.record_payment(draft, datetime(2026, 10, 2))
     invoice_id = _issued(c)
     with pytest.raises(ValueError, match="Zukunft"):
-        c.record_payment(invoice_id, 10.0, datetime.now() + timedelta(days=2))
-    with pytest.raises(ValueError):
-        c.record_payment(invoice_id, float("nan"), datetime(2026, 10, 2))
+        c.record_payment(invoice_id, datetime.now() + timedelta(days=2))
+    with pytest.raises(ValueError, match="keine Zahlung"):
+        c.reverse_payment(invoice_id, datetime(2026, 10, 2))
     c.cancel_invoice(invoice_id)
     with pytest.raises(GoBDError):
-        c.record_payment(invoice_id, 10.0, datetime(2026, 10, 2))
+        c.record_payment(invoice_id, datetime(2026, 10, 2))
 
 
-def test_reminder_demands_only_the_outstanding_amount(controller, seller, tmp_path):
-    from pypdf import PdfReader
-    from src.utils.pdf_generator import PDFGenerator
+def test_legacy_partly_paid_invoices_are_open_again(controller, seller):
     c = controller
     invoice_id = _issued(c)
-    c.record_payment(invoice_id, 19.0, datetime(2026, 10, 10))
-    target = tmp_path / "mahnung.pdf"
-    PDFGenerator(c).generate_reminder_pdf(c.get_invoice(invoice_id), str(target), 1)
-    text = "".join(page.extract_text() for page in PdfReader(str(target)).pages)
-    assert "100,00 €" in text and "119,00 €" in text and "-19,00 €" in text
-
-
-def test_partly_paid_invoice_past_due_is_overdue(controller, seller):
-    c = controller
-    invoice_id = _issued(c) # due 15.10.2026
-    c.record_payment(invoice_id, 50.0, datetime(2026, 10, 10))
-    invoice = c.get_invoice_header(invoice_id)
-    assert invoice.status == "Überfällig" and c.outstanding_amount(invoice) == 69.0
+    c.db.memory_conn.execute("UPDATE invoices SET status = 'Teilbezahlt' WHERE id = ?", (invoice_id,))
+    c.db.memory_conn.commit()
+    c._reload("invoices")
+    c._migrate_partly_paid()
+    c.refresh_overdue()
+    assert c.get_invoice_header(invoice_id).status == "Überfällig"
 
 
 def test_manipulated_paid_amount_is_detected(controller, seller):
     c = controller
     invoice_id = _issued(c)
-    c.record_payment(invoice_id, 50.0, datetime(2026, 10, 10))
-    c.db.memory_conn.execute("UPDATE invoices SET paid_amount = 119 WHERE id = ?", (invoice_id,))
+    c.record_payment(invoice_id, datetime(2026, 10, 10))
+    c.db.memory_conn.execute("UPDATE invoices SET paid_amount = 100 WHERE id = ?", (invoice_id,))
     c.db.memory_conn.commit()
     assert any("bezahlte Betrag" in p for p in c.verify_integrity(check_files=False))
 
@@ -289,28 +280,28 @@ def test_check_of_received_invoice_is_logged(controller, seller, tmp_path):
         controller.add_incoming_invoice("Lieferant", DAY, float("inf"), "Test", str(path), einvoice_format="XRechnung (CII)")
 
 
-def test_payment_dialog_from_the_status_menu(controller, seller, qapp, monkeypatch):
-    from qfluentwidgets import MessageBox, MessageBoxBase
-    from src.views.invoice_interface import InvoiceInterface, PaymentDialog
-    monkeypatch.setattr(MessageBox, "exec", lambda self: 1)
-    amounts = iter(["50,00", None])
+def test_payment_dialog_and_paid_column(controller, seller, qapp, monkeypatch):
+    from PySide6.QtCore import QDate
+    from qfluentwidgets import MessageBoxBase
+    from src.views.invoice_interface import InvoiceInterface
 
     def run(dialog):
-        text = next(amounts)
-        if text is not None:
-            dialog.amountEdit.setText(text)
+        dialog.datePicker.setDate(QDate(2026, 11, 18)) # money came in earlier
         return 1
     monkeypatch.setattr(MessageBoxBase, "exec", run)
     today = datetime.now(timezone.utc)
     invoice_id = controller.create_invoice(_customer(controller), today, today, ITEM, status="Offen")
     interface = InvoiceInterface(controller)
-    interface.change_status(invoice_id, "Teilbezahlt") # amount typed in: 50,00
-    assert controller.get_invoice_header(invoice_id).status == "Teilbezahlt"
-    interface.change_status(invoice_id, "Bezahlt") # dialog proposes the open 69,00
+    page = interface.list_page
+    page.refresh()
+    titles = [col.title for col in page.model.columns]
+    assert titles.index("Bezahlt am") == titles.index("Fällig am") + 1
+    assert "Teilbezahlt" not in controller.next_invoice_statuses(controller.get_invoice_header(invoice_id))
+    interface.change_status(invoice_id, "Bezahlt")
     invoice = controller.get_invoice_header(invoice_id)
-    assert invoice.status == "Bezahlt" and invoice.paid_amount == 119.0
-    dialog = PaymentDialog(invoice, 0.0, full=False, parent=interface)
-    assert not dialog.validate() # no amount
+    assert invoice.status == "Bezahlt" and invoice.paid_at == datetime(2026, 11, 18)
+    page.refresh()
+    assert page.model.text(0, titles.index("Bezahlt am")) == "18.11.2026"
 
 
 def test_sent_reminder_is_archived(controller, seller, tmp_path):
