@@ -45,7 +45,8 @@ def _delete_windows():
 def data_dir(tmp_path, monkeypatch):
     for name, sub in (("DATA_DIR", ""), ("APP_DATA_DIR", "app_data"), ("ASSETS_DIR", "assets"),
                       ("INCOMING_INVOICES_DIR", "app_data/incoming_invoices"), ("RECEIPTS_DIR", "assets/receipts"),
-                      ("INVOICE_ARCHIVE_DIR", "app_data/archive/invoices")):
+                      ("INVOICE_ARCHIVE_DIR", "app_data/archive/invoices"),
+                      ("REMINDER_ARCHIVE_DIR", "app_data/archive/reminders")):
         monkeypatch.setattr(paths, name, str(tmp_path / sub))
     monkeypatch.setattr(paths, "DB_PATH", str(tmp_path / "schalk.enc.db"))
     monkeypatch.setattr(paths, "KEY_PATH", str(tmp_path / "schalk.key"))

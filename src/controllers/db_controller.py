@@ -3,6 +3,8 @@ import hashlib
 import json
 import logging
 import math
+import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -13,9 +15,9 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, selectinload
-from src.models.database import DatabaseManager, Setting, Customer, Invoice, InvoiceItem, Quote, QuoteItem, CashbookEntry, DocumentHistory, IncomingInvoice
+from src.models.database import DatabaseManager, Setting, Customer, Invoice, InvoiceItem, Quote, QuoteItem, CashbookEntry, DocumentHistory, IncomingInvoice, Payment
 from src.utils.signal_bus import SignalBus
-from src.utils.calculations import calculate_totals, item_total
+from src.utils.calculations import calculate_totals, item_total, round_money
 from src.utils.text import fmt_money
 from src.utils.tax import TAX_RATE_OPTIONS, has_zero_rate, vat_category, EXEMPTION_REQUIRED_MESSAGE
 from src.utils.archive import archive_file, file_sha256, is_pdf, verify_file
@@ -42,6 +44,12 @@ CASHBOOK_INCOME_TYPES = ["Einnahme"]
 UNPAID_STATUSES = ("Offen", "Teilbezahlt", "Überfällig")
 DEFAULT_PAYMENT_TERMS = 14
 NO_ITEMS_MESSAGE = "Rechnungen und Angebote benötigen mindestens eine Position mit Bezeichnung."
+# Technical settings whose changes are not worth a history entry
+UNLOGGED_SETTINGS = {"last_backup"}
+# Statuses a new or edited draft may get; every later status is set by update_invoice_status / record_payment
+EDITOR_STATUSES = ("Entwurf", "Offen")
+INVOICE_NUMBER_PATTERN = re.compile(r"RE(\d{4})\d{2}(\d+)")
+RECEIPT_NUMBER_PATTERN = re.compile(r"K(\d{4})-(\d+)")
 
 # Settings that describe the seller; they are frozen into every finalized invoice
 SELLER_KEYS = ["company_name", "first_name", "last_name", "address", "postal_code", "city", "tax_id", "vat_id",
@@ -83,6 +91,18 @@ def _seal_time(session: Session, column, now: datetime) -> datetime:
     if last is not None and _naive(now) <= _naive(last):
         return (_naive(last) + timedelta(microseconds=1)).replace(tzinfo=now.tzinfo)
     return now
+
+
+def _ranges(numbers: List[int], limit: int = 10) -> str:
+    """[1, 2, 3, 7] -> '1–3, 7'"""
+    parts, start = [], None
+    for i, n in enumerate(numbers):
+        if start is None:
+            start = n
+        if i + 1 == len(numbers) or numbers[i + 1] != n + 1:
+            parts.append(str(start) if start == n else f"{start}–{n}")
+            start = None
+    return ", ".join(parts[:limit]) + (" …" if len(parts) > limit else "")
 
 
 class _EntityCache:
@@ -131,6 +151,7 @@ class DBController:
             self._settings = {s.key: s.value for s in session.query(Setting).all()}
         for kind in self._caches:
             self._reload(kind)
+        self._seal_legacy_history()
         self.refresh_overdue()
 
     # --- Infrastructure ---
@@ -152,13 +173,22 @@ class DBController:
                 query = query.filter(cache.model.id.in_(ids))
             cache.replace(query.all(), ids)
 
-    def _commit(self, session: Session, **changes):
+    def _commit(self, session: Session, durable: bool = False, **changes):
         """
         Commits, persists the encrypted file (in the background), refreshes only the changed
         records in the cache and notifies the views. changes: kind -> ids (None = reload all).
+        durable: waits until the file is written. Used when something is sealed (numbers, hash chains):
+        a crash right afterwards must not lose a number that already appears on an archived document.
         """
+        self._seal_history(session)
         session.commit()
         self.db.save()
+        if durable or self._finalized_pending:
+            try:
+                self.db.flush()
+            except Exception:
+                # Already reported to the user (DatabaseManager on_save_error); the data is safe in memory
+                logger.exception("Festgeschriebene Daten konnten nicht sofort gespeichert werden")
         bus = SignalBus.get()
         for kind, ids in changes.items():
             self._reload(kind, ids)
@@ -186,12 +216,46 @@ class DBController:
         return sha256.hexdigest()
 
     def _log(self, session: Session, document_type: str, document_id: int, action: str, user: str = None):
-        session.add(DocumentHistory(
+        entry = DocumentHistory(
             document_type=document_type,
             document_id=document_id,
             user=user or _current_user(),
-            action=action
-        ))
+            action=action,
+            timestamp=datetime.now(timezone.utc),
+        )
+        session.add(entry)
+        # Sealed into the hash chain on commit, in the order the entries were added (= order of their ids)
+        session.info.setdefault("history", []).append(entry)
+
+    @staticmethod
+    def _history_hash_payload(entry) -> str:
+        return "|".join(str(v) for v in [entry.document_type, entry.document_id, entry.user, entry.action, _iso(entry.timestamp)])
+
+    def _seal_history(self, session: Session):
+        entries = session.info.pop("history", [])
+        if not entries:
+            return
+        with session.no_autoflush:
+            last = (session.query(DocumentHistory.hash_chain).filter(DocumentHistory.hash_chain != None)
+                    .order_by(DocumentHistory.id.desc()).first())
+        prev = last[0] if last else "GENESIS"
+        for entry in entries:
+            entry.hash_chain = prev = self._hash_record(self._history_hash_payload(entry), prev)
+
+    def _seal_legacy_history(self):
+        """Databases of versions before 1.4 have an unsealed history: it is sealed once, in its current order."""
+        with self.get_session() as session:
+            if session.query(DocumentHistory.id).filter(DocumentHistory.hash_chain != None).first():
+                return
+            entries = session.query(DocumentHistory).order_by(DocumentHistory.id).all()
+            if not entries:
+                return
+            prev = "GENESIS"
+            for entry in entries:
+                entry.hash_chain = prev = self._hash_record(self._history_hash_payload(entry), prev)
+            session.commit()
+        self.db.save()
+        logger.info("Verlauf: %s bestehende Einträge in die Hash-Kette aufgenommen", len(entries))
 
     def get_document_history(self, document_type: str, document_id: int) -> List[DocumentHistory]:
         with self.get_session() as session:
@@ -207,10 +271,16 @@ class DBController:
     def set_setting(self, key: str, value: str):
         self.set_settings({key: value})
 
-    def set_settings(self, values: dict):
+    def set_settings(self, values: dict, user: str = None):
+        changed = {key: value for key, value in values.items() if (self._settings.get(key) or "") != (value or "")}
         with self.get_session() as session:
             for key, value in values.items():
                 session.merge(Setting(key=key, value=value))
+            # GoBD: changes of the company data (and of every other setting) stay traceable
+            for key, value in changed.items():
+                if key not in UNLOGGED_SETTINGS:
+                    self._log(session, "Settings", 0, f"{key}: {self._settings.get(key) or '–'} -> {value or '–'}", user)
+            self._seal_history(session)
             session.commit()
         self._settings.update(values)
         self.db.save()
@@ -392,7 +462,7 @@ class DBController:
                 self._seal_cashbook_entry(session, entry, now)
                 self._log(session, "Cashbook", entry.id, f"Festgeschrieben als {entry.receipt_number}", user)
             ids = [e.id for e in drafts]
-            self._commit(session, cashbook=ids)
+            self._commit(session, durable=True, cashbook=ids)
             return len(ids)
 
     def storno_cashbook_entry(self, entry_id: int, user: str = None) -> int:
@@ -427,7 +497,7 @@ class DBController:
             self._log(session, "Cashbook", entry.id, "Storno-Gegenbuchung", user)
             self._log(session, "Cashbook", original.id, f"Storniert durch {entry.receipt_number}", user)
             new_id = entry.id
-            self._commit(session, cashbook=[new_id])
+            self._commit(session, durable=True, cashbook=[new_id])
             return new_id
 
     def get_cashbook_entries(self) -> list:
@@ -446,6 +516,7 @@ class DBController:
             session.add(customer)
             session.flush()
             customer_id = customer.id
+            self._log(session, "Customer", customer_id, "Angelegt")
             self._commit(session, customers=[customer_id])
             return customer_id
 
@@ -454,13 +525,14 @@ class DBController:
             customer = session.get(Customer, customer_id)
             if not customer:
                 return
-            changed = False
+            changes = []
             for key, value in kwargs.items():
                 if getattr(customer, key) != value:
+                    changes.append(f"{key}: {getattr(customer, key) or '–'} -> {value or '–'}")
                     setattr(customer, key, value)
-                    changed = True
-            if not changed:
+            if not changes:
                 return
+            self._log(session, "Customer", customer_id, "Geändert: " + "; ".join(changes))
             # Cached drafts and quotes show the customer, so refresh those as well
             invoice_ids = [i.id for i in self._caches["invoices"].by_id.values() if i.customer_id == customer_id]
             quote_ids = [q.id for q in self._caches["quotes"].by_id.values() if q.customer_id == customer_id]
@@ -478,6 +550,7 @@ class DBController:
             customer = session.get(Customer, customer_id)
             if not customer:
                 return False, "Kunde nicht gefunden"
+            self._log(session, "Customer", customer_id, f"Gelöscht ({customer.display_name})")
             session.delete(customer)
             self._commit(session, customers=[customer_id])
             return True, ""
@@ -604,6 +677,8 @@ class DBController:
                 problems.append(f"{label} des Kunden fehlt.")
         if not items:
             problems.append("Die Rechnung hat keine Positionen.")
+        if invoice.invoice_date and _naive(invoice.invoice_date).date() > date.today():
+            problems.append("Das Rechnungsdatum liegt in der Zukunft. Eine Rechnung wird mit dem Datum ihrer Ausstellung festgeschrieben.")
         if not invoice.delivery_date:
             problems.append("Leistungsdatum fehlt.")
         elif invoice.delivery_end_date and _naive(invoice.delivery_end_date) < _naive(invoice.delivery_date):
@@ -719,7 +794,9 @@ class DBController:
         items = self._normalize_items(items)
         credit_amount = self._credit(kwargs)
         totals = calculate_totals(items, credit_amount)
-        status = kwargs.get("status", "Entwurf")
+        status = kwargs.get("status") or "Entwurf"
+        if status not in EDITOR_STATUSES:
+            raise ValueError(f"Eine neue Rechnung kann nur als Entwurf oder offen angelegt werden, nicht als '{status}'.")
         exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
 
         with self.get_session() as session:
@@ -771,6 +848,9 @@ class DBController:
         credit_amount = self._credit(kwargs)
         totals = calculate_totals(items, credit_amount)
         exemption_reason = self._exemption_reason(items, kwargs.get("tax_exemption_reason"))
+        status = kwargs.get("status")
+        if status and status not in EDITOR_STATUSES:
+            raise ValueError(f"Ein Entwurf kann beim Speichern nur offen gestellt werden, nicht '{status}'.")
 
         with self.get_session() as session:
             invoice = session.get(Invoice, invoice_id)
@@ -791,7 +871,6 @@ class DBController:
             self._write_items(session, InvoiceItem, "invoice_id", invoice_id, items)
             self._log(session, "Invoice", invoice_id, "Updated", user)
 
-            status = kwargs.get("status")
             if status and status != "Entwurf":
                 self._finalize(session, invoice, user)
                 invoice.status = status
@@ -826,6 +905,12 @@ class DBController:
                         return False, "Eine festgeschriebene Rechnung kann nicht wieder zum Entwurf werden."
                     return False, f"Statuswechsel von '{invoice.status}' nach '{status}' ist nicht vorgesehen."
 
+                # Invoices marked as paid before version 1.4 have no payments; they are reopened without one
+                if status in ("Bezahlt", "Teilbezahlt") or (invoice.status == "Bezahlt" and status == "Offen" and invoice.paid_amount):
+                    session.rollback()
+                    session.close()
+                    return self._status_by_payment(invoice_id, status, user)
+
                 message = ""
                 if not self.is_finalized(invoice):
                     self._finalize(session, invoice, user)
@@ -836,6 +921,96 @@ class DBController:
                 return True, message
         except GoBDError as e:
             return False, str(e)
+
+    def _status_by_payment(self, invoice_id: int, status: str, user: str = None):
+        """Paid statuses always follow the payments: 'Bezahlt' books the open amount as received today,
+        'Offen' after 'Bezahlt' takes the payments back (e.g. a returned direct debit)."""
+        invoice = self.get_invoice_header(invoice_id)
+        today = datetime.combine(date.today(), datetime.min.time())
+        try:
+            if status == "Bezahlt" and self.outstanding_amount(invoice) <= 0:
+                # Nothing to pay (e.g. a credit as high as the invoice): no payment, only the status
+                with self.get_session() as session:
+                    record = session.get(Invoice, invoice_id)
+                    self._log(session, "Invoice", invoice_id, f"Status: {record.status} -> Bezahlt (nichts zu zahlen)", user)
+                    record.status = "Bezahlt"
+                    self._commit(session, invoices=[invoice_id])
+            elif status == "Bezahlt":
+                self.record_payment(invoice_id, self.outstanding_amount(invoice), today, user=user)
+            elif status == "Offen":
+                self.record_payment(invoice_id, -(invoice.paid_amount or 0.0), today, "Zahlung zurückgebucht", user)
+            else:
+                return False, "Für eine Teilzahlung bitte den gezahlten Betrag erfassen („Zahlung erfassen“)."
+        except (GoBDError, ValueError) as e:
+            return False, str(e)
+        return True, ""
+
+    # --- Payments ---
+    def outstanding_amount(self, invoice) -> float:
+        """Amount still to be paid (gross amount minus all payments)."""
+        return round_money((invoice.gross_amount or 0.0) - (invoice.paid_amount or 0.0))
+
+    def get_payments(self, invoice_id: int) -> List[Payment]:
+        with self.get_session() as session:
+            return session.query(Payment).filter(Payment.invoice_id == invoice_id).order_by(Payment.id).all()
+
+    def payments_in_year(self, year: int) -> List[Payment]:
+        start, end = datetime(year, 1, 1), datetime(year + 1, 1, 1)
+        with self.get_session() as session:
+            return (session.query(Payment).filter(Payment.payment_date >= start, Payment.payment_date < end)
+                    .order_by(Payment.payment_date, Payment.id).all())
+
+    def record_payment(self, invoice_id: int, amount: float, payment_date: datetime, note: str = "", user: str = None) -> int:
+        """
+        Books a payment received for an issued invoice and sets the status from the paid sum: 'Bezahlt' once
+        nothing is open, otherwise 'Teilbezahlt'. A negative amount takes payments back (returned direct
+        debit); payments themselves are never changed or deleted.
+        """
+        amount = float(amount)
+        if not math.isfinite(amount) or not round_money(amount):
+            raise ValueError("Bitte einen Zahlungsbetrag angeben.")
+        amount = round_money(amount)
+        if payment_date is None:
+            raise ValueError("Bitte das Datum des Zahlungseingangs angeben.")
+        if _naive(payment_date).date() > date.today():
+            raise ValueError("Das Datum des Zahlungseingangs liegt in der Zukunft.")
+        with self.get_session() as session:
+            invoice = session.get(Invoice, invoice_id)
+            if not invoice:
+                raise GoBDError("Rechnung nicht gefunden.")
+            if not self.is_finalized(invoice) or invoice.cancels_invoice_id:
+                raise GoBDError("Zahlungen werden nur zu festgeschriebenen Rechnungen erfasst (nicht zu Entwürfen oder Stornorechnungen).")
+            if invoice.status == "Storniert":
+                raise GoBDError(f"Rechnung {invoice.invoice_number} ist storniert.")
+            paid = round_money(invoice.paid_amount or 0.0)
+            if amount > 0 and amount > self.outstanding_amount(invoice):
+                raise ValueError(f"Die Zahlung ({fmt_money(amount)}) ist höher als der offene Betrag "
+                                 f"({fmt_money(self.outstanding_amount(invoice))}).")
+            if amount < 0 and -amount > paid:
+                raise ValueError(f"Es können höchstens die erfassten Zahlungen ({fmt_money(paid)}) zurückgebucht werden.")
+            payment = Payment(invoice_id=invoice_id, payment_date=payment_date, amount=amount,
+                              note=(note or "").strip() or None, user=user or _current_user())
+            session.add(payment)
+            invoice.paid_amount = round_money(paid + amount)
+            outstanding = self.outstanding_amount(invoice)
+            if outstanding <= 0:
+                status = "Bezahlt"
+            elif invoice.paid_amount > 0:
+                status = "Teilbezahlt"
+            else:
+                status = "Offen"
+            kind = "Zahlung erfasst" if amount > 0 else "Zahlung zurückgebucht"
+            self._log(session, "Invoice", invoice_id,
+                      f"{kind}: {fmt_money(amount)} am {_naive(payment_date):%d.%m.%Y}, offen {fmt_money(outstanding)}", user)
+            if status != invoice.status:
+                self._log(session, "Invoice", invoice_id, f"Status: {invoice.status} -> {status}", user)
+                invoice.status = status
+            session.flush()
+            payment_id = payment.id
+            self._commit(session, invoices=[invoice_id])
+        # Taken back after the due date: overdue again
+        self.refresh_overdue()
+        return payment_id
 
     def cancel_invoice(self, invoice_id: int, user: str = None) -> int:
         """GoBD/UStG: an issued invoice is cancelled by a Stornorechnung with negated amounts."""
@@ -907,7 +1082,9 @@ class DBController:
                 invoice.status = "Überfällig"
             self._commit(session, invoices=overdue)
 
-    def record_reminder(self, invoice_id: int, level: int, user: str = None):
+    def record_reminder(self, invoice_id: int, level: int, user: str = None, document: str = None):
+        """document: the reminder PDF as sent; a read-only copy is archived (sent business letters, § 257 HGB)."""
+        archived = ""
         with self.get_session() as session:
             inv = session.get(Invoice, invoice_id)
             if not inv:
@@ -919,9 +1096,12 @@ class DBController:
             if inv.status != "Überfällig":
                 self._log(session, "Invoice", invoice_id, f"Status: {inv.status} -> Überfällig", user)
                 inv.status = "Überfällig"
+            if document:
+                path, sha256 = archive_file(document, paths.REMINDER_ARCHIVE_DIR, extension=".pdf")
+                archived = f" (archiviert: {os.path.basename(path)}, SHA-256 {sha256})"
             inv.reminder_level = level
             inv.last_reminder_date = datetime.now(timezone.utc)
-            self._log(session, "Invoice", invoice_id, f"{level}. Mahnung erstellt", user)
+            self._log(session, "Invoice", invoice_id, f"{level}. Mahnung erstellt{archived}", user)
             self._commit(session, invoices=[invoice_id])
             return True
 
@@ -983,6 +1163,7 @@ class DBController:
         with self.get_session() as session:
             for document_id in document_ids:
                 self._log(session, document_type, document_id, action)
+            self._seal_history(session)
             session.commit()
         self.db.save()
 
@@ -1095,7 +1276,10 @@ class DBController:
 
     # --- Incoming Invoices ---
     def add_incoming_invoice(self, invoice_type: str, date: datetime, amount: float, description: str, source_path: str,
-                             user: str = None, einvoice_format: str = None, invoice_number: str = None, supplier_name: str = None) -> int:
+                             user: str = None, einvoice_format: str = None, invoice_number: str = None, supplier_name: str = None,
+                             check_result: str = None) -> int:
+        if not math.isfinite(float(amount)):
+            raise ValueError("Der Betrag ist ungültig.")
         pdf = is_pdf(source_path)
         if not (pdf or (source_path.lower().endswith(".xml") and einvoice_format)):
             raise ValueError("Eingangsrechnungen müssen als PDF oder als XRechnung (XML) vorliegen.")
@@ -1115,6 +1299,8 @@ class DBController:
             session.add(entry)
             session.flush()
             self._log(session, "IncomingInvoice", entry.id, "Created", user)
+            if check_result:
+                self._log(session, "IncomingInvoice", entry.id, check_result[:2000], user)
             entry_id = entry.id
             self._commit(session, incoming=[entry_id])
             return entry_id
@@ -1183,6 +1369,45 @@ class DBController:
 
         threading.Thread(target=run, name="schalk-integrity-check", daemon=True).start()
 
+    @staticmethod
+    def _gaps(numbers: Iterable[str], pattern: re.Pattern) -> Dict[str, List[int]]:
+        """year -> running numbers missing between 1 and the highest one (numbers of other formats are ignored)."""
+        by_year = defaultdict(set)
+        for number in numbers:
+            match = pattern.fullmatch(number or "")
+            if match:
+                by_year[match.group(1)].add(int(match.group(2)))
+        return {year: sorted(set(range(1, max(used) + 1)) - used) for year, used in by_year.items()
+                if len(used) != max(used)}
+
+    def _number_gaps(self, session: Session) -> List[str]:
+        """GoBD / § 14 UStG: invoice and receipt numbers are assigned without gaps; a gap means a record is missing."""
+        problems = []
+        invoices = session.execute(select(Invoice.invoice_number).where(Invoice.finalized_at != None)).scalars()
+        for year, missing in sorted(self._gaps(invoices, INVOICE_NUMBER_PATTERN).items()):
+            problems.append(f"Rechnungsnummern {year}: lückenhaft, es fehlen die laufenden Nummern {_ranges(missing)}.")
+        receipts = session.execute(select(CashbookEntry.receipt_number).where(CashbookEntry.finalized_at != None)).scalars()
+        for year, missing in sorted(self._gaps(receipts, RECEIPT_NUMBER_PATTERN).items()):
+            problems.append(f"Kassenbuch {year}: lückenhafte Belegnummern, es fehlen {_ranges(missing)}.")
+        return problems
+
+    def _verify_history(self, session: Session) -> List[str]:
+        prev = "GENESIS"
+        for entry in session.execute(select(DocumentHistory.__table__).order_by(DocumentHistory.id)):
+            if not entry.hash_chain or self._hash_record(self._history_hash_payload(entry), prev) != entry.hash_chain:
+                return [f"Verlauf: Eintrag Nr. {entry.id} ({entry.action}) wurde verändert, eingefügt, oder davor fehlen Einträge."]
+            prev = entry.hash_chain
+        return []
+
+    @staticmethod
+    def _verify_payments(session: Session) -> List[str]:
+        sums = dict(session.execute(select(Payment.invoice_id, func.sum(Payment.amount)).group_by(Payment.invoice_id)).all())
+        problems = []
+        for inv in session.execute(select(Invoice.id, Invoice.invoice_number, Invoice.paid_amount)):
+            if round_money(sums.get(inv.id) or 0.0) != round_money(inv.paid_amount or 0.0):
+                problems.append(f"Rechnung {inv.invoice_number}: der bezahlte Betrag passt nicht zu den erfassten Zahlungen.")
+        return problems
+
     def _verify(self, session: Session, check_files: bool) -> List[str]:
         problems = []
         prev = "GENESIS"
@@ -1207,6 +1432,10 @@ class DBController:
             if check_files and inv.pdf_path and not verify_file(paths.resolve(inv.pdf_path), inv.pdf_hash):
                 problems.append(f"Archiv-PDF der Rechnung {inv.invoice_number} fehlt oder wurde verändert.")
             prev = inv.hash_chain or prev
+
+        problems += self._number_gaps(session)
+        problems += self._verify_history(session)
+        problems += self._verify_payments(session)
 
         if not check_files:
             return problems

@@ -11,6 +11,7 @@ from src.controllers.db_controller import DBController
 from src.utils import paths
 from src.utils.archive import is_pdf
 from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
+from src.utils.einvoice_validation import check_received
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
@@ -42,7 +43,9 @@ def guess_from_pdf_text(path: str):
 
 
 class IncomingInvoiceDialog(MessageBoxBase):
-    def __init__(self, parent, amount: float, date_obj, description: str, einvoice: EInvoiceData = None):
+    MAX_NOTES = 6
+
+    def __init__(self, parent, amount: float, date_obj, description: str, einvoice: EInvoiceData = None, notes: list = ()):
         super().__init__(parent)
         self.viewLayout.addWidget(SubtitleLabel('Rechnungsdaten bestätigen', self))
         if einvoice:
@@ -50,10 +53,13 @@ class IncomingInvoiceDialog(MessageBoxBase):
             info.setWordWrap(True)
             self.viewLayout.addWidget(info)
             if einvoice.currency != "EUR":
-                warning = BodyLabel(f"Achtung: Die Rechnung lautet auf {einvoice.currency}. Bitte den Betrag in Euro eintragen.", self)
-                warning.setWordWrap(True)
-                warning.setStyleSheet("color: #C42B1C;")
-                self.viewLayout.addWidget(warning)
+                self._warning(f"Achtung: Die Rechnung lautet auf {einvoice.currency}. Bitte den Betrag in Euro eintragen.")
+            # Result of the rule check: the invoice is stored anyway (it was received), but the user should know
+            shown = list(notes[:self.MAX_NOTES])
+            if len(notes) > self.MAX_NOTES:
+                shown.append(f"… und {len(notes) - self.MAX_NOTES} weitere Hinweise (Protokoll: {paths.LOG_PATH}).")
+            for note in shown:
+                self._warning(note)
         self.supplierEdit = self._field("Lieferant", LineEdit(self), einvoice.seller_name if einvoice else "")
         self.numberEdit = self._field("Rechnungsnummer", LineEdit(self), einvoice.number if einvoice else "")
         self.descEdit = self._field("Beschreibung", LineEdit(self), description)
@@ -66,6 +72,12 @@ class IncomingInvoiceDialog(MessageBoxBase):
         self.amountSpin.setValue(amount)
         self._field("Betrag brutto (€)", self.amountSpin)
         self.widget.setMinimumWidth(420)
+
+    def _warning(self, text: str):
+        warning = BodyLabel(text, self)
+        warning.setWordWrap(True)
+        warning.setStyleSheet("color: #C42B1C;")
+        self.viewLayout.addWidget(warning)
 
     def _field(self, label, widget, text=None):
         self.viewLayout.addWidget(BodyLabel(label, self))
@@ -170,9 +182,24 @@ class IncomingInvoiceInterface(ListPage):
                 continue
             try:
                 einvoice = read_einvoice(filepath)
+            except ValueError as e: # too large for reading the structured data
+                if filepath.lower().endswith(".xml"):
+                    notify_error(self, "Nicht eingelesen", f"{os.path.basename(filepath)}: {e}")
+                    continue
+                logger.info("%s: %s; wird als PDF ohne strukturierte Daten erfasst", filepath, e)
+                einvoice = None
             except Exception:
                 logger.exception("E-Rechnung %s konnte nicht gelesen werden", filepath)
                 einvoice = None
+            notes = []
+            if einvoice:
+                try:
+                    notes = check_received(einvoice)
+                except Exception:
+                    logger.exception("Prüfung der E-Rechnung %s fehlgeschlagen", filepath)
+                    notes = ["Die Rechnung konnte nicht gegen die EN-16931-Regeln geprüft werden (Details im Protokoll)."]
+                if notes:
+                    logger.info("Prüfung der E-Rechnung %s: %s", filepath, notes)
             if einvoice is None and filepath.lower().endswith(".xml"):
                 notify_error(self, "Keine E-Rechnung", f"{os.path.basename(filepath)} ist keine lesbare XRechnung/ZUGFeRD-Datei.")
                 continue
@@ -186,7 +213,7 @@ class IncomingInvoiceInterface(ListPage):
                 amount, date_obj = guess_from_pdf_text(filepath)
                 description = os.path.basename(filepath)
 
-            dialog = IncomingInvoiceDialog(self.window(), amount, date_obj, description, einvoice)
+            dialog = IncomingInvoiceDialog(self.window(), amount, date_obj, description, einvoice, notes)
             if not dialog.exec():
                 continue
             data = dialog.get_data()
@@ -208,6 +235,7 @@ class IncomingInvoiceInterface(ListPage):
                     einvoice_format=einvoice.format if einvoice else None,
                     invoice_number=data["invoice_number"],
                     supplier_name=data["supplier_name"],
+                    check_result=self._check_result(einvoice, notes),
                 )
             except (OSError, ValueError) as e:
                 logger.exception("Eingangsrechnung %s konnte nicht gespeichert werden", filepath)
@@ -216,6 +244,15 @@ class IncomingInvoiceInterface(ListPage):
             imported += 1
         if imported:
             notify_success(self, "Erfolg", f"{imported} Eingangsrechnung(en) gespeichert.")
+
+    @staticmethod
+    def _check_result(einvoice, notes: list) -> str:
+        """Documented in the history: what was checked on receipt and with which result."""
+        if not einvoice:
+            return "Keine strukturierten Rechnungsdaten (PDF/Scan), nicht geprüft"
+        if not notes:
+            return "E-Rechnung geprüft (EN 16931): keine Beanstandungen"
+        return "E-Rechnung geprüft: " + " | ".join(notes)
 
     def export_datev(self):
         from src.utils.datev_generator import DatevGenerator

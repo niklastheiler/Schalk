@@ -49,7 +49,7 @@ Das Skript legt eine virtuelle Umgebung an, führt die Tests aus und erzeugt `di
 |---|---|
 | Datenbank (verschlüsselt) | `%LOCALAPPDATA%\Schalk\schalk.enc.db` |
 | Schlüssel (Windows-DPAPI) | `%LOCALAPPDATA%\Schalk\schalk.key` |
-| Archivierte Rechnungen, Belege, Eingangsrechnungen | `%LOCALAPPDATA%\Schalk\app_data`, `...\assets` |
+| Archivierte Rechnungen, Mahnungen, Belege, Eingangsrechnungen | `%LOCALAPPDATA%\Schalk\app_data`, `...\assets` |
 | Protokoll | `%LOCALAPPDATA%\Schalk\schalk.log` (Abstürze zusätzlich in `absturz.log`) |
 | Sicherungen vor Updates | `%LOCALAPPDATA%\Schalk\backups` |
 
@@ -80,7 +80,11 @@ Zusätzlich lässt sich jede Rechnung als **XRechnung 3.0 (CII)** exportieren. D
 - Rechnungen erhalten ihre lückenlose Nummer erst beim Festschreiben. Danach sind sie unveränderbar und werden nur per Stornorechnung korrigiert.
 - Rechnungen und Kassenbuch sind über SHA-256-Hash-Ketten gesichert. Archivierte Dateien sind schreibgeschützt und mit Hash gespeichert.
 - Kassenbucheinträge sind zunächst Entwürfe und lassen sich bearbeiten oder löschen. Mit „Festschreiben“ erhalten sie ihre Belegnummer und kommen in die Hash-Kette. Danach werden sie nur noch per Gegenbuchung storniert. Der Kassenbestand darf an keinem Tag negativ werden, auch nicht durch rückdatierte Buchungen. Eingangsrechnungen werden storniert, nie gelöscht. Wird dieselbe Rechnung (gleiche Datei oder gleicher Lieferant mit gleicher Rechnungsnummer) ein zweites Mal hochgeladen, fragt Schalk nach.
-- Jede Aktion wird mit dem Windows-Benutzer protokolliert (Verlauf). Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft.
+- Zahlungen werden mit Betrag und Datum erfasst („Zahlung erfassen“). Der Status (Teilbezahlt/Bezahlt) ergibt sich aus den Zahlungen, Mahnungen nennen den offenen Betrag. Eine Rücklastschrift wird als negative Zahlung gebucht, Zahlungen werden nie geändert oder gelöscht. Versandte Mahnungen werden schreibgeschützt archiviert.
+- Jede Aktion, auch jede Änderung an Kunden und Firmendaten, wird mit dem Windows-Benutzer protokolliert (Verlauf). Der Verlauf ist ebenfalls hash-verkettet. Beim Start und unter Einstellungen → Sicherheit & GoBD wird die Integrität geprüft: Hash-Ketten, lückenlose Rechnungs- und Belegnummern, Zahlungen und alle archivierten Dateien.
+- **GoBD-Datenexport** für die Betriebsprüfung (Einstellungen → Sicherheit & GoBD): alle steuerrelevanten Tabellen als CSV mit `index.xml` nach dem Beschreibungsstandard der Finanzverwaltung, auf Wunsch mit allen Belegen.
+- Erhaltene E-Rechnungen (CII) werden beim Hochladen gegen die EN-16931-Regeln geprüft. Profile, die keine E-Rechnung sind (MINIMUM, BASIC WL), werden gemeldet.
+- Verfahrensdokumentation (technischer Teil): [`docs/VERFAHRENSDOKUMENTATION.md`](docs/VERFAHRENSDOKUMENTATION.md). Prüf- und Abnahmebericht: [`docs/AUDIT.md`](docs/AUDIT.md). Die organisatorischen Teile der Verfahrensdokumentation ergänzt der Anwender.
 
 ## Prüfregeln aktuell halten
 
@@ -94,12 +98,18 @@ python tools/rule_updates.py --update
 
 Dependabot schlägt wöchentlich Updates der Python-Pakete und GitHub-Actions als gebündelte PRs vor (`.github/dependabot.yml`). Die PySide6-Pakete werden immer gemeinsam aktualisiert, weil ihre Versionen exakt übereinstimmen müssen. Jeder Update-PR durchläuft die Tests und die E-Rechnungs-Prüfung. Ein Update landet erst mit dem nächsten Release bei den Nutzern; bei Sicherheitsupdates daher zeitnah ein Patch-Release veröffentlichen (siehe „Neue Version veröffentlichen“). Bei Updates von PySide6 oder PySide6-Fluent-Widgets vor dem Merge kurz die Oberfläche unter Windows durchklicken, die automatischen Tests decken sie nur teilweise ab.
 
-## Tests
+## Tests und Qualitätsprüfung
 
 ```powershell
 pip install -r requirements-dev.txt
 python -m pytest tests
 ```
+
+Jeder Pull Request und jedes Release durchläuft `.github/workflows/einvoice-check.yml`:
+- Job `quality`: Lint (pyflakes), statische Sicherheitsanalyse (bandit, ab mittlerem Schweregrad) und bekannte Sicherheitslücken aller gepinnten Abhängigkeiten (pip-audit). Die Werkzeuge stehen in `requirements-ci.txt`.
+- Job `check` (Windows): alle Tests und die unabhängige Validierung der E-Rechnungen aller Steuerfälle mit Mustang (inklusive PDF/A-3 über veraPDF).
+
+`python tools/benchmark.py` misst die Kernabläufe (Festschreiben, E-Rechnungsprüfung, PDF, Speichern, Integritätsprüfung) in einem temporären Datenordner.
 
 ## Autor
 

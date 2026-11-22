@@ -548,12 +548,20 @@ class PDFGenerator:
 
         elements = self._title(f"{level}. Mahnung")
         elements += self._text("Sehr geehrte Damen und Herren,", texts[0])
-        overview = Table([
+        # After a partial payment only the rest is demanded
+        outstanding = c.outstanding_amount(invoice)
+        rows = [
             [self._p("Rechnung", "head"), self._p("Rechnungsdatum", "head"), self._p("Fällig seit", "head"),
              self._p("Offener Betrag", "head_right")],
             [self._p(_markup(invoice.invoice_number), "cell"), self._p(_date(invoice.invoice_date), "cell"),
-             self._p(_date(due), "cell"), self._p(fmt_money(invoice.gross_amount), "cell_bold_right")],
-        ], colWidths=[50 * mm, 40 * mm, 40 * mm, 35 * mm])
+             self._p(_date(due), "cell"), self._p(fmt_money(outstanding), "cell_bold_right")],
+        ]
+        if invoice.paid_amount:
+            rows.insert(1, [self._p("Rechnungsbetrag", "cell"), self._p("", "cell"), self._p("", "cell"),
+                            self._p(fmt_money(invoice.gross_amount), "cell_right")])
+            rows.insert(2, [self._p("abzgl. bereits gezahlt", "cell"), self._p("", "cell"), self._p("", "cell"),
+                            self._p(fmt_money(-invoice.paid_amount), "cell_right")])
+        overview = Table(rows, colWidths=[50 * mm, 40 * mm, 40 * mm, 35 * mm])
         overview.setStyle(_table_style([
             ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),

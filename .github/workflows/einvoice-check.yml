@@ -1,5 +1,8 @@
-# Runs the tests and checks the e-invoices of every tax case with the independent Mustang validator
-# (ZUGFeRD XML and profile, PDF/A-3 via veraPDF, XRechnung). Runs on every pull request and push to main.
+# Quality gate of every pull request, of every push to main and of every release:
+# - quality: lint (pyflakes), static security analysis (bandit) and known vulnerabilities of all pinned
+#   dependencies (pip-audit against the PyPI/OSV advisories)
+# - check: the tests and the e-invoices of every tax case with the independent Mustang validator
+#   (ZUGFeRD XML and profile, PDF/A-3 via veraPDF, XRechnung)
 name: E-Rechnung prüfen
 
 on:
@@ -10,13 +13,41 @@ on:
   # The release workflow runs this check first and only publishes when it passes
   workflow_call:
 
+permissions:
+  contents: read
+
 env:
   MUSTANG_VERSION: "2.26.0"
   MUSTANG_SHA1: "8755fc333032f802ad7dcf3930201edfe64014e2"
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only analyses the source code (nothing of Schalk runs here), so a Linux runner is enough
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Prüfwerkzeuge installieren
+        run: python -m pip install -r requirements-ci.txt
+
+      - name: Lint (pyflakes)
+        run: python -m pyflakes src tools tests run.py
+
+      - name: Statische Sicherheitsanalyse (bandit, ab mittlerem Schweregrad)
+        run: python -m bandit -q -ll -r src tools run.py
+
+      - name: Bekannte Sicherheitslücken in den Abhängigkeiten (pip-audit)
+        # All versions are pinned, so the advisories are looked up without installing (pywin32 needs Windows)
+        run: python -m pip_audit --no-deps --disable-pip -r requirements-dev.txt -r requirements-ci.txt
+
   check:
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
     # Python steps run in cmd like build.bat: PowerShell on GitHub stops on any stderr output

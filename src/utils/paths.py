@@ -28,6 +28,7 @@ ASSETS_DIR = os.path.join(DATA_DIR, "assets")
 INCOMING_INVOICES_DIR = os.path.join(APP_DATA_DIR, "incoming_invoices")
 RECEIPTS_DIR = os.path.join(ASSETS_DIR, "receipts")
 INVOICE_ARCHIVE_DIR = os.path.join(APP_DATA_DIR, "archive", "invoices")
+REMINDER_ARCHIVE_DIR = os.path.join(APP_DATA_DIR, "archive", "reminders")
 # Documents opened or printed from Schalk (draft previews, quotes, reminders); emptied on every start
 TEMP_DOCUMENTS_DIR = os.path.join(tempfile.gettempdir(), "Schalk")
 
