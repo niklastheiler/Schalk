@@ -127,6 +127,69 @@ def open_document(parent, path: str, print_document: bool = False) -> bool:
         return False
 
 
+# --- Unsaved changes ---
+def form_state(widgets) -> tuple:
+    """
+    Values of all input fields among widgets and their children: text fields, check boxes, drop-downs and date
+    pickers. Two states compare equal when nothing was typed or chosen in between.
+    """
+    from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QLineEdit, QPlainTextEdit, QRadioButton, QTextEdit
+    from qfluentwidgets import DatePicker
+    import shiboken6
+    values = []
+    for root in widgets:
+        for widget in [root] + root.findChildren(QWidget):
+            if not shiboken6.isValid(widget):
+                continue
+            if isinstance(widget, QLineEdit):
+                values.append(widget.text())
+            elif isinstance(widget, (QCheckBox, QRadioButton)):
+                values.append(widget.isChecked())
+            elif isinstance(widget, DatePicker):
+                values.append(widget.date.toString(Qt.ISODate))
+            elif isinstance(widget, ComboBox):
+                values.append(widget.currentText())
+            elif isinstance(widget, QAbstractSpinBox):
+                values.append(widget.text())
+            elif isinstance(widget, (QTextEdit, QPlainTextEdit)):
+                values.append(widget.toPlainText())
+    return tuple(values)
+
+
+class UnsavedChanges:
+    """
+    Mixin for views with input fields: mark_clean() remembers the state after loading or saving,
+    has_unsaved_changes() tells whether something was typed since. The main window asks before switching tabs.
+    """
+    _clean_state = None
+
+    def unsaved_fields(self) -> list:
+        """Widgets whose input fields count (default: the whole view)."""
+        return [self]
+
+    def extra_state(self) -> tuple:
+        """Values outside the input fields, e.g. an attached file."""
+        return ()
+
+    def _current_state(self) -> tuple:
+        return form_state(self.unsaved_fields()) + tuple(self.extra_state())
+
+    def mark_clean(self):
+        self._clean_state = self._current_state()
+
+    def has_unsaved_changes(self) -> bool:
+        return self._clean_state is not None and self._current_state() != self._clean_state
+
+
+def ask_discard_changes(parent) -> bool:
+    """True if the user discards the unsaved changes, False to stay."""
+    box = MessageBox("Ungespeicherte Änderungen",
+                     "Hier gibt es Änderungen, die noch nicht gespeichert sind.\n\nMöchten Sie sie verwerfen?", parent.window())
+    box.yesButton.setText("Verwerfen")
+    box.cancelButton.setText("Bleiben")
+    return bool(box.exec())
+
+
 def confirm(parent, title: str, text: str) -> bool:
     box = MessageBox(title, text, parent.window())
     box.yesButton.setText("Ja")
@@ -147,7 +210,7 @@ class Column:
     text: Callable[[Any], str]
     sort: Optional[Callable[[Any], Any]] = None # sort key; default: natural order of the displayed text
     width: Optional[int] = None # None = stretch
-    align: Qt.AlignmentFlag = Qt.AlignLeft | Qt.AlignVCenter
+    align: Qt.AlignmentFlag = Qt.AlignCenter # all list tables show their cells centered
     descending: bool = False # direction of the first click on the column header (newest/largest first)
     # Drop-down in the cell: choices(record) lists the selectable values, on_choice(record, value) applies one
     choices: Optional[Callable[[Any], list]] = None
