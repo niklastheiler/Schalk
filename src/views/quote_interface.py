@@ -24,8 +24,8 @@ class QuoteListPage(ListPage):
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, descending=True),
             Column("Status", lambda q: q.status + (" (archiviert)" if q.archived_at else ""), width=170),
-            Column("", lambda q: "", width=56, icon_svg=PDF_SVG, tooltip="Angebot drucken",
-                   on_click=lambda q: interface.open_pdf(q.id, print_only=True)),
+            Column("", lambda q: "", width=56, icon_svg=PDF_SVG, tooltip="PDF speichern unter …",
+                   on_click=lambda q: interface.save_pdf(q.id)),
             Column("", lambda q: "", width=56, icon_svg=ROCKET_SVG, tooltip="In Rechnung umwandeln",
                    on_click=lambda q: interface.convert_to_invoice(q.id, ask=True)),
         ]
