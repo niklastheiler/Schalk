@@ -21,14 +21,16 @@ am besten zusammen mit dem Steuerberater. Bei jeder neuen Schalk-Version prüfen
 **Ausgangsrechnung**
 1. Entwurf anlegen (Kunde, Positionen, Steuersatz je Position, bei 0 % ein Befreiungsgrund). Entwürfe sind änderbar und löschbar
    und haben noch keine Rechnungsnummer.
-2. Status „Offen“ bzw. Archivieren **schreibt fest**. Schalk prüft dabei die Pflichtangaben nach § 14 Abs. 4 UStG und die
+2. Status „Offen“ **schreibt fest**. Schalk prüft dabei die Pflichtangaben nach § 14 Abs. 4 UStG und die
    EN-16931-Regeln, vergibt die nächste lückenlose Nummer (`RE` + Jahr + Monat + laufende Nummer je Jahr), friert Verkäufer- und
    Empfängerdaten ein, nimmt die Rechnung in die Hash-Kette auf, speichert sofort und archiviert das ZUGFeRD-PDF/A-3 schreibgeschützt.
 3. Danach ist die Rechnung unveränderbar. Korrektur nur über **Stornorechnung** (eigene Nummer, Typ 381, Bezug auf das
    Original) und, falls nötig, eine neue Rechnung.
 4. **Zahlungen** werden mit Betrag und Datum erfasst („Zahlung erfassen“ bzw. Status „Bezahlt/Teilbezahlt“). Der Status ergibt
    sich aus der Summe der Zahlungen. Eine Rücklastschrift wird als negative Zahlung gebucht, Zahlungen werden nie geändert oder gelöscht.
-5. **Mahnungen** (bis 3 Stufen, frühestens 14 Tage auseinander) nennen den offenen Betrag. Eine Kopie jeder gespeicherten Mahnung
+5. Das **PDF-Symbol** rechts neben dem Status druckt festgeschriebene Rechnungen, Angebote und die zuletzt erstellte Mahnung.
+   Bei Entwürfen ist es ausgegraut.
+6. **Mahnungen** (bis 3 Stufen, frühestens 14 Tage auseinander) nennen den offenen Betrag. Eine Kopie jeder gespeicherten Mahnung
    wird schreibgeschützt archiviert.
 
 **Kassenbuch**: Buchungen werden als Entwurf erfasst (Datum, Betrag, Art, Text, PDF-Beleg). „Festschreiben“ vergibt die
@@ -70,7 +72,7 @@ schreibgeschützt mit SHA-256 archiviert. Dubletten werden gemeldet. Erhaltene R
 |---|---|---|
 | ZUGFeRD-PDF / XRechnung | Ausgang | Rechnung an Kunden bzw. Behörden (Leitweg-ID als Käuferreferenz) |
 | E-Rechnungs-Import | Eingang | XRechnung/ZUGFeRD/UBL; PDF ohne strukturierte Daten |
-| „DATEV Export“ | Ausgang | ZIP mit den Belegen eines Monats für Steuerberater/DATEV Unternehmen online (keine Buchungssätze) |
+| „DATEV Export“ | Ausgang | ZIP mit den bezahlten Rechnungen eines Monats für Steuerberater/DATEV Unternehmen online (keine Buchungssätze). Stornierte Rechnungen und ihre Stornorechnungen sind nicht enthalten. |
 | **GoBD-Datenexport** | Ausgang | Einstellungen → Sicherheit & GoBD: Rechnungen, Positionen, Zahlungen, Kassenbuch, erhaltene Rechnungen, Kunden, Verlauf als CSV (UTF-8, `;`, Dezimalkomma) mit `index.xml` nach dem Beschreibungsstandard (GDPdU), optional mit allen Belegen. Gedacht für die Datenträgerüberlassung (Z3). Jeder Export wird im Verlauf protokolliert. |
 
 Datenzugriff Z1/Z2 ✎: Der Prüfer erhält am Arbeitsplatz Lesezugriff über die Oberfläche. Schalk hat keine eigene Prüferrolle,

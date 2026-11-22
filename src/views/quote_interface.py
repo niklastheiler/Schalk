@@ -6,8 +6,8 @@ from src.controllers.db_controller import DBController, GoBDError, QUOTE_STATUSE
 from src.utils import paths
 from src.utils.pdf_generator import PDFGenerator
 from src.utils.signal_bus import SignalBus
-from src.views.common import (COLOR_GREEN, COLOR_GREY, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money, notify_error,
-                              notify_success, open_document)
+from src.views.common import (COLOR_GREEN, COLOR_GREY, PDF_SVG, ROCKET_SVG, Column, ListPage, confirm, fmt_date, fmt_money,
+                              notify_error, notify_success, open_document)
 from src.views.invoice_interface import RIGHT, _naive, add_action
 from src.views.quote_editor import QuoteEditor
 
@@ -24,6 +24,8 @@ class QuoteListPage(ListPage):
             Column("Kunde", c.customer_display_name),
             Column("Betrag", lambda q: fmt_money(q.gross_amount), sort=lambda q: q.gross_amount, width=130, align=RIGHT, descending=True),
             Column("Status", lambda q: q.status + (" (archiviert)" if q.archived_at else ""), width=170),
+            Column("", lambda q: "", width=56, icon_svg=PDF_SVG, tooltip="Angebot drucken",
+                   on_click=lambda q: interface.open_pdf(q.id, print_only=True)),
             Column("", lambda q: "", width=56, icon_svg=ROCKET_SVG, tooltip="In Rechnung umwandeln",
                    on_click=lambda q: interface.convert_to_invoice(q.id, ask=True)),
         ]
