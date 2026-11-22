@@ -120,6 +120,10 @@ def main():
     threading.Thread(target=_warm_up, name="schalk-warm-up", daemon=True).start()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 
+    if not window.isVisible():
+        # Closed while starting (e.g. to install an update): nothing left to run, the process must end
+        lock.unlock()
+        return 0
     exit_code = app.exec()
     lock.unlock()
     return exit_code
