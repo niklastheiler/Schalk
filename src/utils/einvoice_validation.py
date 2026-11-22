@@ -12,6 +12,7 @@ from typing import List
 import facturx
 from lxml import etree
 from saxonche import PySaxonProcessor
+from src.utils.einvoice_messages import german_message
 
 _FACTURX_XSLT = os.path.join(os.path.dirname(facturx.__file__), "xsd_and_schematron", "facturx-en16931", "FACTUR-X_EN16931.xslt")
 _RESOURCES = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources")
@@ -32,7 +33,7 @@ def _executable(stylesheet: str):
 
 
 def _run_schematron(stylesheet: str, xml: bytes) -> List[str]:
-    """Returns the violated rules (fatal assertions) as readable messages; empty list = valid."""
+    """Returns the violated rules (fatal assertions) as German messages; empty list = valid."""
     with _LOCK:
         node = _processor().parse_xml(xml_text=xml.decode("utf-8"))
         report = _executable(stylesheet).transform_to_string(xdm_node=node)
@@ -42,7 +43,8 @@ def _run_schematron(stylesheet: str, xml: bytes) -> List[str]:
         if failed.get("flag", "fatal") != "fatal":
             continue
         text = " ".join((failed.findtext(f"{_SVRL}text") or "").split())
-        problems.append(text or failed.get("id", "Unbekannte Regel"))
+        # The official rules report in English: shown in German
+        problems.append(german_message(failed.get("id", ""), text))
     return problems
 
 

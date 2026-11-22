@@ -3,6 +3,7 @@ Generates the structured invoice data (UN/CEFACT CII, EN 16931) for
 - ZUGFeRD / Factur-X (profile EN 16931, embedded into the PDF/A-3)
 - XRechnung 3.0 (CII syntax, pure XML; required by public authorities and accepted for B2B)
 """
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List
@@ -113,6 +114,11 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         reg = TaxRegistration()
         reg.id = ("FC", seller["tax_id"])
         party.tax_registrations.add(reg)
+        if not seller.get("vat_id"):
+            # BR-CO-26: the buyer must be able to identify the seller by BT-29, BT-30 or BT-31; the Steuernummer
+            # (BT-32) does not count. Without a USt-IdNr. (typical for small businesses) it serves as the
+            # seller identifier (BT-29).
+            party.id = seller["tax_id"]
 
     # --- Buyer ---
     party = doc.trade.agreement.buyer
@@ -254,5 +260,11 @@ def build_cii_xml(invoice, db_controller, profile: str = "en16931") -> bytes:
         doc.trade.items.add(line)
 
     # Validates against the Factur-X EN 16931 XSD (same CII D16B schema as XRechnung CII)
-    return doc.serialize(schema="FACTUR-X_EN16931")
+    try:
+        return doc.serialize(schema="FACTUR-X_EN16931")
+    except Exception as e:
+        # The schema errors are English and technical: logged, the user gets a German message
+        logging.getLogger(__name__).exception("E-Rechnung verletzt das XML-Schema: %s", e)
+        raise ValueError("Die E-Rechnung entspricht nicht dem vorgeschriebenen XML-Schema (technischer Fehler). "
+                         "Bitte melden Sie diesen Fehler.") from e
 

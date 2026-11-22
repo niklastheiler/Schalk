@@ -34,12 +34,13 @@ def authority(c):
 
 
 def small_business(c):
-    c.set_settings({"small_business": "1"})
+    # Typical small business: only a Steuernummer, no USt-IdNr. (BR-CO-26 needs another seller identifier)
+    c.set_settings({"small_business": "1", "vat_id": ""})
     try:
         return _invoice(c, DOMESTIC, [{"title": "Gartenpflege", "quantity": 4, "unit": "Stunde", "unit_price": 35.0, "tax_percent": 0.0}],
                         tax_exemption_reason="Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG")
     finally:
-        c.set_settings({"small_business": "0"})
+        c.set_settings({"small_business": "0", "vat_id": SELLER["vat_id"]})
 
 
 def tax_exempt(c):
