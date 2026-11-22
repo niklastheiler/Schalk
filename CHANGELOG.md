@@ -10,7 +10,7 @@
 - Trennlinie zwischen Kundendaten und Rechnungs-/Angebotsdaten
 - Schmale Fenster: Filter und Suche rücken in eine eigene Zeile, Spalten wie „Firma“ werden nicht mehr abgeschnitten
 - Technische Basis: Python 3.15, aktualisierte Bibliotheken
-- Nur noch Windows 11: Windows 10 wird nicht mehr unterstützt, das Setup lässt sich dort nicht mehr installieren
+- Voraussetzung ist jetzt Windows 11 ab Version 24H2; auf älteren Windows-Versionen lässt sich das Setup nicht mehr installieren
 
 ## 1.3.1
 
@@ -92,7 +92,7 @@ Schwerpunkt: nachweisbar gültige E-Rechnungen.
 
 ## 1.0
 
-Erste finale Version von Schalk, dem Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter Windows 10/11.
+Erste finale Version von Schalk, dem Rechnungs- und Buchhaltungsprogramm für kleine Unternehmen unter Windows.
 
 **Installation:** `Schalk-v1.0-windows-x64.zip` herunterladen, entpacken und `Schalk\Schalk.exe` starten. Eine Python-Installation ist nicht nötig.
 
