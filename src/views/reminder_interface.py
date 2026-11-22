@@ -27,9 +27,9 @@ class ReminderInterface(ListPage):
             Column("Fällig seit", lambda i: fmt_date(c.get_due_date(i)), sort=lambda i: c.get_due_date(i), width=110),
             Column("Mahnstufe", lambda i: str(i.reminder_level or 0), sort=lambda i: i.reminder_level or 0, width=90, descending=True),
             Column("Nächste Mahnung", self._next_text, width=200),
-            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Letzte Mahnung drucken",
+            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Letzte Mahnung als PDF speichern unter …",
                    enabled=lambda i: bool(i.reminder_level), disabled_tooltip="Noch keine Mahnung erstellt",
-                   on_click=lambda i: self.generate_reminder(i.id, i.reminder_level, print_only=True)),
+                   on_click=lambda i: self.save_reminder(i.id, i.reminder_level)),
         ]
         super().__init__("Mahnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          row_color=lambda i: COLOR_RED if self._next_level(i) else COLOR_YELLOW, parent=parent)
@@ -100,6 +100,21 @@ class ReminderInterface(ListPage):
             notify_success(self, "Status aktualisiert", "Die Rechnung wurde als bezahlt markiert.")
         else:
             notify_error(self, "Nicht möglich", message)
+
+    def save_reminder(self, invoice_id, level):
+        """Saves the last reminder again (only the "Speichern unter" dialog, no PDF program, no new reminder)."""
+        invoice = self.db_controller.get_invoice(invoice_id)
+        target, _ = QFileDialog.getSaveFileName(self, "Mahnung speichern unter",
+                                                paths.desktop_path(f"Mahnung_{level}_{invoice.invoice_number}.pdf"), "PDF (*.pdf)")
+        if not target:
+            return
+        try:
+            PDFGenerator(self.db_controller).generate_reminder_pdf(invoice, target, level)
+        except Exception as e:
+            logger.exception("Mahnung konnte nicht gespeichert werden")
+            notify_error(self, "Fehler", f"Die PDF konnte nicht erstellt werden: {e}")
+            return
+        notify_success(self, "Mahnung gespeichert", target)
 
     def generate_reminder(self, invoice_id, level, print_only=False):
         invoice = self.db_controller.get_invoice(invoice_id)

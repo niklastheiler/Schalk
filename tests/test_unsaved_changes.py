@@ -122,3 +122,17 @@ def test_all_list_cells_are_centered(window, controller, qapp):
     page = window.invoice_interface.list_page
     assert all(page.proxy.index(0, col).data(Qt.TextAlignmentRole) == int(Qt.AlignCenter)
                for col in range(len(page.model.columns)))
+
+
+def test_reordered_fields_are_no_change(window, qapp):
+    """Clicking a field can raise() it, which reorders its parent's children: that alone is no change."""
+    settings = window.settings_interface
+    window.switchTo(settings)
+    qapp.processEvents()
+    assert not settings.has_unsaved_changes()
+    for edit in settings.edits.values():
+        edit.raise_()
+    settings.edits["company_name"].lower()
+    assert not settings.has_unsaved_changes()
+    settings.edits["city"].setText("Woanders")
+    assert settings.has_unsaved_changes()

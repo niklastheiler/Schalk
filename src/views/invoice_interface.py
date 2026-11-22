@@ -71,9 +71,9 @@ class InvoiceListPage(ListPage):
                    sort=lambda i: _naive(i.paid_at) if i.paid_at and i.status == "Bezahlt" else None, width=110),
             Column("Status", lambda i: i.status, width=140, choices=c.next_invoice_statuses,
                    on_choice=lambda invoice, status: interface.change_status(invoice.id, status)),
-            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="Rechnung drucken",
-                   enabled=c.is_finalized, disabled_tooltip="Erst nach dem Festschreiben (Status „Offen“) druckbar",
-                   on_click=lambda invoice: interface.print_pdf(invoice.id)),
+            Column("", lambda i: "", width=56, icon_svg=PDF_SVG, tooltip="PDF speichern unter …",
+                   enabled=c.is_finalized, disabled_tooltip="Erst nach dem Festschreiben (Status „Offen“) verfügbar",
+                   on_click=lambda invoice: interface.save_pdf(invoice.id)),
         ]
         super().__init__("Kundenrechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)

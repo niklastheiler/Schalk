@@ -1,5 +1,4 @@
-"""PDF symbol next to the status (print invoices, quotes, reminders), no "Archivieren" menu entry, DATEV export filter."""
-import os
+"""PDF symbol next to the status (save invoices, quotes, reminders without opening a PDF program), no "Archivieren" menu entry, DATEV export filter."""
 from datetime import datetime, timezone
 from PySide6.QtCore import Qt
 from qfluentwidgets import RoundMenu
@@ -14,12 +13,12 @@ def _customer(c):
 
 
 def _pdf_index(page, record_id):
-    column = next(i for i, c in enumerate(page.model.columns) if c.tooltip and "drucken" in c.tooltip)
+    column = next(i for i, c in enumerate(page.model.columns) if c.icon_svg and "PDF" in c.icon_svg)
     row = next(r for r in range(page.proxy.rowCount()) if page.proxy.index(r, 0).data(Qt.UserRole + 1).id == record_id)
     return page.proxy.index(row, column)
 
 
-def test_invoice_pdf_symbol_prints_only_finalized_invoices(window, controller, qapp):
+def test_invoice_pdf_symbol_saves_only_finalized_invoices(window, controller, data_dir, qapp):
     c = controller
     customer_id = _customer(c)
     draft = c.create_invoice(customer_id, DAY, DAY, ITEM)
@@ -38,10 +37,12 @@ def test_invoice_pdf_symbol_prints_only_finalized_invoices(window, controller, q
     assert window.opened == []
 
     index = _pdf_index(page, issued)
-    assert index.data(Qt.ToolTipRole) == "Rechnung drucken"
-    page._on_cell_clicked(index)
-    assert len(window.opened) == 1 and window.opened[0][1] == "print"
-    assert os.path.basename(window.opened[0][0]).startswith(c.get_invoice_header(issued).invoice_number)
+    assert index.data(Qt.ToolTipRole) == "PDF speichern unter …"
+    page._on_cell_clicked(index) # only the "Speichern unter" dialog (patched: saves on the desktop)
+    number = c.get_invoice_header(issued).invoice_number
+    saved = data_dir / f"Rechnung_{number}.pdf"
+    assert saved.read_bytes() == open(c.get_invoice_header(issued).pdf_path, "rb").read()
+    assert window.opened == [] # no PDF program
 
 
 def test_no_archive_entry_in_the_invoice_menu(window, controller, qapp):
@@ -53,7 +54,7 @@ def test_no_archive_entry_in_the_invoice_menu(window, controller, qapp):
         assert "Archivieren" not in [a.text() for a in menu.actions()]
 
 
-def test_quote_and_reminder_pdf_symbols(window, controller, qapp):
+def test_quote_and_reminder_pdf_symbols(window, controller, data_dir, qapp):
     c = controller
     customer_id = _customer(c)
     quote_id = c.create_quote(customer_id, DAY, ITEM)
@@ -61,7 +62,8 @@ def test_quote_and_reminder_pdf_symbols(window, controller, qapp):
     qapp.processEvents()
     page = window.quote_interface.list_page
     page._on_cell_clicked(_pdf_index(page, quote_id))
-    assert window.opened[-1][1] == "print" and "Angebot" in os.path.basename(window.opened[-1][0])
+    quote = c.get_quote(quote_id)
+    assert (data_dir / f"Angebot_{quote.quote_number}.pdf").read_bytes().startswith(b"%PDF")
 
     invoice_id = c.create_invoice(customer_id, DAY, DAY, ITEM, status="Offen") # overdue since 15.10.2026
     window.switchTo(window.reminder_interface)
@@ -78,7 +80,10 @@ def test_quote_and_reminder_pdf_symbols(window, controller, qapp):
     page.refresh()
     qapp.processEvents()
     page._on_cell_clicked(_pdf_index(page, invoice_id))
-    assert window.opened[-1][1] == "print" and "Mahnung_1" in os.path.basename(window.opened[-1][0])
+    number = c.get_invoice_header(invoice_id).invoice_number
+    assert (data_dir / f"Mahnung_1_{number}.pdf").read_bytes().startswith(b"%PDF")
+    assert window.opened == [] # nothing was opened in a PDF program
+    assert c.get_invoice_header(invoice_id).reminder_level == 1 # saving again is no new reminder
 
 
 def test_datev_export_takes_paid_invoices_without_cancellations(controller, seller, tmp_path):
