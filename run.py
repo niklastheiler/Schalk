@@ -1,7 +1,7 @@
 import sys
 
-if sys.version_info < (3, 14):
-    sys.exit("Schalk benötigt Python 3.14.")
+if sys.version_info < (3, 15):
+    sys.exit("Schalk benötigt Python 3.15.")
 if sys.platform != "win32":
     sys.exit("Schalk läuft ausschließlich unter Windows.")
 
