@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.2
+
+- E-Rechnung ohne USt-IdNr. (nur Steuernummer, z. B. Kleinunternehmer) lässt sich wieder festschreiben (Fehler BR-CO-26)
+- Prüfmeldungen der E-Rechnung immer auf Deutsch, mit Hinweis, was zu tun ist
+- Eingabeprüfung: PLZ (in Deutschland 5 Ziffern), Telefonnummer, E-Mail-Adresse und Steuernummer
+- Steuernummer: Schrägstriche werden beim Tippen automatisch eingefügt (12/345/67890)
+- Die gewählte Farbe gilt jetzt auch für das Programm („Farbe (Programm und Dokumente)“)
+- Trennlinie zwischen Kundendaten und Rechnungs-/Angebotsdaten
+- Schmale Fenster: Filter und Suche rücken in eine eigene Zeile, Spalten wie „Firma“ werden nicht mehr abgeschnitten
+- Technische Basis: Python 3.15, aktualisierte Bibliotheken
+
 ## 1.3.1
 
 - Backup ohne Passwort: eine einzelne Datei, die sich auf jedem PC einspielen lässt; beschädigte oder unvollständige Dateien werden erkannt. Backups aus 1.3 und älter (mit Passwort) lassen sich nicht mehr einspielen, deshalb nach dem Update gleich ein neues Backup erstellen
