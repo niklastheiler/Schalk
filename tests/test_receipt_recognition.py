@@ -36,10 +36,9 @@ def test_archived_own_invoice_is_income(controller, seller, tmp_path):
 
 def test_own_invoice_recognised_by_number_and_name_in_the_text(controller, seller, tmp_path):
     invoice = _own_invoice(controller)
-    controller.record_payment(invoice.id, 19.0, datetime(2026, 11, 4))
     path = _receipt(tmp_path / "scan.pdf", [seller["company_name"], f"Rechnung Nr. {invoice.invoice_number}", "Gesamtbetrag 119,00 EUR"])
     guess = recognize_receipt(controller, path)
-    assert guess.entry_type == INCOME and guess.amount == 100.0 # only what is still open
+    assert guess.entry_type == INCOME and guess.amount == 119.0 # the whole invoice
 
 
 def test_foreign_receipt_is_an_expense(controller, seller, tmp_path):

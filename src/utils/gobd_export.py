@@ -73,6 +73,7 @@ TABLES = [
                _c("zahlungsziel_tage", "Zahlungsziel in Tagen", INTEGER, lambda r: r.payment_terms_days),
                _c("status", "Status", TEXT),
                _paid_column(),
+               _c("bezahlt_am", "Datum des Zahlungseingangs", DATE, lambda r: r.paid_at if r.status == "Bezahlt" else None),
                _c("storno_zu_id", "Stornorechnung zu Rechnung (id)", INTEGER, lambda r: r.cancels_invoice_id),
                _c("festgeschrieben_am", "Zeitpunkt der Festschreibung (UTC)", TEXT, lambda r: _timestamp(r.finalized_at)),
                _c("hash", "SHA-256-Hash-Kette", TEXT, lambda r: r.hash_chain),

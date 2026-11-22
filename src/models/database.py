@@ -56,7 +56,7 @@ class Invoice(Base):
     delivery_date = Column(DateTime, nullable=False)
     # Leistungszeitraum: delivery_date is its start, this its end (None = a single day of delivery)
     delivery_end_date = Column(DateTime)
-    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Teilbezahlt, Bezahlt, Überfällig, Storniert
+    status = Column(String, nullable=False, default="Entwurf") # Entwurf, Offen, Bezahlt, Überfällig, Storniert
     net_amount = Column(Float, default=0.0)
     tax_amount = Column(Float, default=0.0)
     gross_amount = Column(Float, default=0.0)
@@ -70,6 +70,8 @@ class Invoice(Base):
     last_reminder_date = Column(DateTime)
     # Sum of all payments (table payments); kept with every payment, checked by the integrity check
     paid_amount = Column(Float)
+    # Date of the payment (shown as "Bezahlt am"); None while the invoice is not paid
+    paid_at = Column(DateTime)
 
     # GoBD: set once when the invoice is finalized (leaves "Entwurf"); content is immutable afterwards
     finalized_at = Column(DateTime)
@@ -158,6 +160,8 @@ class CashbookEntry(Base):
     attachment_hash = Column(String)
     storno_of_id = Column(Integer)
     finalized_at = Column(DateTime, index=True) # None = draft, still editable
+    # Cash received for an own invoice: becomes a payment of that invoice when the entry is finalized
+    invoice_id = Column(Integer)
 
 class IncomingInvoice(Base):
     __tablename__ = 'incoming_invoices'

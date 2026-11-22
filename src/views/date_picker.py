@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QSize, QDate
 from PySide6.QtGui import QFontMetrics
 from qfluentwidgets import DatePicker
 
@@ -11,6 +11,14 @@ class GermanDatePicker(DatePicker):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDateFormat(self.DD_MM_YYYY)
+
+    # The columns have fixed widths; without this a layout squeezes the picker and the next field covers the year
+    def sizeHint(self):
+        hint = super().sizeHint()
+        return QSize(max(hint.width(), sum(column.width() for column in self.columns)), hint.height())
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
     def setDateFormat(self, format: int):
         if format != self.DD_MM_YYYY:

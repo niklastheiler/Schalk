@@ -18,7 +18,7 @@ def test_only_sensible_next_statuses(controller, seller):
     ok, message = c.update_invoice_status(invoice_id, "Bezahlt")
     assert not ok and "nicht vorgesehen" in message
     assert c.update_invoice_status(invoice_id, "Offen")[0]
-    assert c.next_invoice_statuses(c.get_invoice(invoice_id)) == ["Teilbezahlt", "Bezahlt", "Storniert"]
+    assert c.next_invoice_statuses(c.get_invoice(invoice_id)) == ["Bezahlt", "Storniert"]
     assert c.update_invoice_status(invoice_id, "Bezahlt")[0]
     assert c.next_invoice_statuses(c.get_invoice(invoice_id)) == ["Offen"] # payment taken back
     assert c.update_invoice_status(invoice_id, "Offen")[0]

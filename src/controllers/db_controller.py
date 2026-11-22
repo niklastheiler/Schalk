@@ -26,14 +26,13 @@ from src.utils import paths
 logger = logging.getLogger(__name__)
 
 DRAFT_PREFIX = "ENTWURF-"
-INVOICE_STATUSES = ["Entwurf", "Offen", "Teilbezahlt", "Bezahlt", "Überfällig", "Storniert"]
+INVOICE_STATUSES = ["Entwurf", "Offen", "Bezahlt", "Überfällig", "Storniert"]
 # Process: draft -> issued -> (partly) paid; "Überfällig" is set automatically, "Bezahlt" can be
 # taken back (e.g. returned direct debit), cancelling creates a Stornorechnung
 INVOICE_TRANSITIONS = {
     "Entwurf": ["Offen"],
-    "Offen": ["Teilbezahlt", "Bezahlt", "Storniert"],
-    "Überfällig": ["Teilbezahlt", "Bezahlt", "Storniert"],
-    "Teilbezahlt": ["Bezahlt", "Storniert"],
+    "Offen": ["Bezahlt", "Storniert"],
+    "Überfällig": ["Bezahlt", "Storniert"],
     "Bezahlt": ["Offen"],
     "Storniert": [],
 }
@@ -41,7 +40,7 @@ QUOTE_STATUSES = ["Entwurf", "Versendet", "Angenommen", "Abgelehnt", "Abgelaufen
 CASHBOOK_TYPES = ["Einnahme", "Barentnahme Privat", "Barentnahme Firma"]
 CASHBOOK_INCOME_TYPES = ["Einnahme"]
 # Statuses in which an invoice is still (partly) unpaid
-UNPAID_STATUSES = ("Offen", "Teilbezahlt", "Überfällig")
+UNPAID_STATUSES = ("Offen", "Überfällig")
 DEFAULT_PAYMENT_TERMS = 14
 NO_ITEMS_MESSAGE = "Rechnungen und Angebote benötigen mindestens eine Position mit Bezeichnung."
 # Technical settings whose changes are not worth a history entry
@@ -152,6 +151,7 @@ class DBController:
         for kind in self._caches:
             self._reload(kind)
         self._seal_legacy_history()
+        self._migrate_partly_paid()
         self.refresh_overdue()
 
     # --- Infrastructure ---
@@ -241,6 +241,28 @@ class DBController:
         prev = last[0] if last else "GENESIS"
         for entry in entries:
             entry.hash_chain = prev = self._hash_record(self._history_hash_payload(entry), prev)
+
+    def _migrate_partly_paid(self):
+        """
+        Older versions: 'Teilbezahlt' no longer exists (such invoices are open again), and paid invoices without
+        a payment date get the date they were marked as paid (from the history).
+        """
+        cache = self._caches["invoices"].by_id.values()
+        partly = [i.id for i in cache if i.status == "Teilbezahlt"]
+        undated = [i.id for i in cache if i.status == "Bezahlt" and not i.paid_at]
+        if not partly and not undated:
+            return
+        with self.get_session() as session:
+            for invoice in session.query(Invoice).filter(Invoice.id.in_(partly)):
+                self._log(session, "Invoice", invoice.id, "Status: Teilbezahlt -> Offen (Teilzahlungen gibt es nicht mehr)", "System")
+                invoice.status = "Offen"
+            for invoice in session.query(Invoice).filter(Invoice.id.in_(undated)):
+                marked = (session.query(DocumentHistory.timestamp)
+                          .filter(DocumentHistory.document_type == "Invoice", DocumentHistory.document_id == invoice.id,
+                                  DocumentHistory.action.like("%-> Bezahlt%"))
+                          .order_by(DocumentHistory.id.desc()).first())
+                invoice.paid_at = marked[0] if marked else None
+            self._commit(session, invoices=partly + undated)
 
     def _seal_legacy_history(self):
         """Databases of versions before 1.4 have an unsealed history: it is sealed once, in its current order."""
@@ -359,7 +381,8 @@ class DBController:
             entry.id, _iso(entry.entry_date), _num(entry.amount), entry.receipt_number, entry.description,
             entry.entry_type, entry.attachment_hash or "", int(bool(entry.is_storno)), entry.storno_of_id or "",
             _iso(entry.finalized_at)
-        ])
+        # Added in version 1.4; only present when used, so the hashes of older entries stay valid
+        ] + ([f"invoice:{entry.invoice_id}"] if entry.invoice_id else []))
 
     def _seal_cashbook_entry(self, session: Session, entry: CashbookEntry, finalized_at: datetime):
         """Assigns the receipt number and links the entry into the hash chain; afterwards it is immutable."""
@@ -385,9 +408,35 @@ class DBController:
             raise GoBDError("Festgeschriebene Einträge können nicht mehr geändert werden. Bitte stornieren.")
         return entry
 
-    def add_cashbook_entry(self, entry_date: datetime, amount: float, description: str, category: str, entry_type: str, tax_percent: float, attachment_source: str = None, user: str = None) -> int:
+    def cash_invoices(self, month: Optional[date] = None) -> list:
+        """Own invoices that can be paid in cash: issued in the given month (default: this month), amount open."""
+        month = month or date.today()
+        return [i for i in self.get_invoices()
+                if self.is_finalized(i) and not i.cancels_invoice_id and i.status in UNPAID_STATUSES
+                and (_naive(i.invoice_date).year, _naive(i.invoice_date).month) == (month.year, month.month)
+                and self.outstanding_amount(i) > 0]
+
+    def _check_cash_invoice(self, invoice_id: Optional[int], amount: float, entry_type: str, entry_id: int = None):
+        """Cash income for an own invoice: at most what is still open (drafts for the same invoice included)."""
+        if not invoice_id:
+            return
+        if entry_type not in CASHBOOK_INCOME_TYPES:
+            raise ValueError("Eine Rechnung kann nur einer Einnahme zugeordnet werden.")
+        invoice = self.get_invoice_header(invoice_id)
+        if not invoice or not self.is_finalized(invoice) or invoice.cancels_invoice_id or invoice.status == "Storniert":
+            raise GoBDError("Die Rechnung ist nicht festgeschrieben oder storniert.")
+        if any(e.invoice_id == invoice_id and not e.finalized_at and e.id != entry_id
+               for e in self._caches["cashbook"].by_id.values()):
+            raise ValueError(f"Für Rechnung {invoice.invoice_number} gibt es schon einen Kassenbuch-Entwurf.")
+        # There are no partial payments: the cash received is the whole open amount
+        if round_money(amount) != self.outstanding_amount(invoice):
+            raise ValueError(f"Der Betrag muss dem offenen Betrag von Rechnung {invoice.invoice_number} entsprechen "
+                             f"({fmt_money(self.outstanding_amount(invoice))}).")
+
+    def add_cashbook_entry(self, entry_date: datetime, amount: float, description: str, category: str, entry_type: str, tax_percent: float, attachment_source: str = None, user: str = None, invoice_id: int = None) -> int:
         """Creates a draft entry; it stays editable until the cashbook is finalized."""
         self._check_cashbook_input(amount, entry_type)
+        self._check_cash_invoice(invoice_id, amount, entry_type)
         signed = amount if entry_type in CASHBOOK_INCOME_TYPES else -amount
         self._check_cash_balance(add=(_naive(entry_date).date(), signed))
 
@@ -407,6 +456,7 @@ class DBController:
                 tax_percent=tax_percent,
                 attachment_path=attachment_path,
                 attachment_hash=attachment_hash,
+                invoice_id=invoice_id or None,
             )
             session.add(entry)
             session.flush()
@@ -415,9 +465,10 @@ class DBController:
             self._commit(session, cashbook=[entry_id])
             return entry_id
 
-    def update_cashbook_entry(self, entry_id: int, entry_date: datetime, amount: float, description: str, entry_type: str, attachment_source: str = None, user: str = None):
+    def update_cashbook_entry(self, entry_id: int, entry_date: datetime, amount: float, description: str, entry_type: str, attachment_source: str = None, user: str = None, invoice_id: int = None):
         """Changes a draft entry. attachment_source replaces the receipt; None keeps the current one."""
         self._check_cashbook_input(amount, entry_type)
+        self._check_cash_invoice(invoice_id, amount, entry_type, entry_id)
         current = self.get_cashbook_entry(entry_id)
         if current is None:
             raise GoBDError("Eintrag nicht gefunden.")
@@ -434,6 +485,7 @@ class DBController:
             entry.amount = amount
             entry.description = description or "Keine Angabe"
             entry.entry_type = entry_type
+            entry.invoice_id = invoice_id or None
             self._log(session, "Cashbook", entry_id, "Updated (Entwurf)", user)
             self._commit(session, cashbook=[entry_id])
 
@@ -458,12 +510,24 @@ class DBController:
             if not drafts:
                 return 0
             now = _seal_time(session, CashbookEntry.finalized_at, datetime.now())
+            invoice_ids = []
             for entry in drafts:
                 self._seal_cashbook_entry(session, entry, now)
                 self._log(session, "Cashbook", entry.id, f"Festgeschrieben als {entry.receipt_number}", user)
+                if entry.invoice_id:
+                    # The cash received is a payment of the invoice (same transaction: both or neither)
+                    try:
+                        self._apply_payment(session, session.get(Invoice, entry.invoice_id), entry.entry_date,
+                                            f"bar, Kassenbuch {entry.receipt_number}", user)
+                    except (GoBDError, ValueError) as e:
+                        session.rollback()
+                        raise GoBDError(f"Das Kassenbuch kann nicht festgeschrieben werden: {e}") from e
+                    invoice_ids.append(entry.invoice_id)
             ids = [e.id for e in drafts]
-            self._commit(session, durable=True, cashbook=ids)
-            return len(ids)
+            self._commit(session, durable=True, cashbook=ids, invoices=invoice_ids)
+        if invoice_ids:
+            self.refresh_overdue()
+        return len(ids)
 
     def storno_cashbook_entry(self, entry_id: int, user: str = None) -> int:
         """GoBD: finalized entries are never changed or deleted; a correction is a reversing entry."""
@@ -496,9 +560,23 @@ class DBController:
             self._seal_cashbook_entry(session, entry, _seal_time(session, CashbookEntry.finalized_at, datetime.now()))
             self._log(session, "Cashbook", entry.id, "Storno-Gegenbuchung", user)
             self._log(session, "Cashbook", original.id, f"Storniert durch {entry.receipt_number}", user)
+            invoice_ids = []
+            if original.invoice_id:
+                # The cash payment of the invoice is taken back as well
+                invoice = session.get(Invoice, original.invoice_id)
+                try:
+                    # _apply_payment checks everything before it changes anything
+                    self._apply_payment(session, invoice, entry.entry_date, f"Storno Kassenbuch {entry.receipt_number}",
+                                        user, reverse=True)
+                    invoice_ids.append(invoice.id)
+                except (GoBDError, ValueError) as e:
+                    # e.g. the invoice was cancelled meanwhile: the till is corrected, the invoice stays as it is
+                    self._log(session, "Cashbook", entry.id, f"Zahlung der Rechnung nicht zurückgebucht: {e}", user)
             new_id = entry.id
-            self._commit(session, durable=True, cashbook=[new_id])
-            return new_id
+            self._commit(session, durable=True, cashbook=[new_id], invoices=invoice_ids)
+        if invoice_ids:
+            self.refresh_overdue()
+        return new_id
 
     def get_cashbook_entries(self) -> list:
         return self._caches["cashbook"].sorted()
@@ -906,7 +984,7 @@ class DBController:
                     return False, f"Statuswechsel von '{invoice.status}' nach '{status}' ist nicht vorgesehen."
 
                 # Invoices marked as paid before version 1.4 have no payments; they are reopened without one
-                if status in ("Bezahlt", "Teilbezahlt") or (invoice.status == "Bezahlt" and status == "Offen" and invoice.paid_amount):
+                if status == "Bezahlt" or (invoice.status == "Bezahlt" and status == "Offen" and invoice.paid_amount):
                     session.rollback()
                     session.close()
                     return self._status_by_payment(invoice_id, status, user)
@@ -917,6 +995,8 @@ class DBController:
                     message = f"Rechnung wurde als {invoice.invoice_number} festgeschrieben."
                 self._log(session, "Invoice", invoice_id, f"Status: {invoice.status} -> {status}", user)
                 invoice.status = status
+                if status == "Offen":
+                    invoice.paid_at = None # reopened (paid before payments were recorded)
                 self._commit(session, invoices=[invoice_id])
                 return True, message
         except GoBDError as e:
@@ -934,13 +1014,12 @@ class DBController:
                     record = session.get(Invoice, invoice_id)
                     self._log(session, "Invoice", invoice_id, f"Status: {record.status} -> Bezahlt (nichts zu zahlen)", user)
                     record.status = "Bezahlt"
+                    record.paid_at = today
                     self._commit(session, invoices=[invoice_id])
             elif status == "Bezahlt":
-                self.record_payment(invoice_id, self.outstanding_amount(invoice), today, user=user)
-            elif status == "Offen":
-                self.record_payment(invoice_id, -(invoice.paid_amount or 0.0), today, "Zahlung zurückgebucht", user)
+                self.record_payment(invoice_id, today, user=user)
             else:
-                return False, "Für eine Teilzahlung bitte den gezahlten Betrag erfassen („Zahlung erfassen“)."
+                self.reverse_payment(invoice_id, today, "Zahlung zurückgebucht", user)
         except (GoBDError, ValueError) as e:
             return False, str(e)
         return True, ""
@@ -960,57 +1039,62 @@ class DBController:
             return (session.query(Payment).filter(Payment.payment_date >= start, Payment.payment_date < end)
                     .order_by(Payment.payment_date, Payment.id).all())
 
-    def record_payment(self, invoice_id: int, amount: float, payment_date: datetime, note: str = "", user: str = None) -> int:
+    def record_payment(self, invoice_id: int, payment_date: datetime, note: str = "", user: str = None) -> int:
         """
-        Books a payment received for an issued invoice and sets the status from the paid sum: 'Bezahlt' once
-        nothing is open, otherwise 'Teilbezahlt'. A negative amount takes payments back (returned direct
-        debit); payments themselves are never changed or deleted.
+        Books the payment of an issued invoice: always the whole open amount (there are no partial payments),
+        the status becomes 'Bezahlt'. Payments are never changed or deleted.
         """
-        amount = float(amount)
-        if not math.isfinite(amount) or not round_money(amount):
-            raise ValueError("Bitte einen Zahlungsbetrag angeben.")
-        amount = round_money(amount)
+        return self._book_payment(invoice_id, payment_date, note, user, reverse=False)
+
+    def reverse_payment(self, invoice_id: int, payment_date: datetime, note: str = "", user: str = None) -> int:
+        """Takes the payment back (e.g. a returned direct debit) as a negative entry; the invoice is open again."""
+        return self._book_payment(invoice_id, payment_date, note, user, reverse=True)
+
+    def _book_payment(self, invoice_id: int, payment_date: datetime, note: str, user: str, reverse: bool) -> int:
         if payment_date is None:
             raise ValueError("Bitte das Datum des Zahlungseingangs angeben.")
         if _naive(payment_date).date() > date.today():
             raise ValueError("Das Datum des Zahlungseingangs liegt in der Zukunft.")
         with self.get_session() as session:
-            invoice = session.get(Invoice, invoice_id)
-            if not invoice:
-                raise GoBDError("Rechnung nicht gefunden.")
-            if not self.is_finalized(invoice) or invoice.cancels_invoice_id:
-                raise GoBDError("Zahlungen werden nur zu festgeschriebenen Rechnungen erfasst (nicht zu Entwürfen oder Stornorechnungen).")
-            if invoice.status == "Storniert":
-                raise GoBDError(f"Rechnung {invoice.invoice_number} ist storniert.")
-            paid = round_money(invoice.paid_amount or 0.0)
-            if amount > 0 and amount > self.outstanding_amount(invoice):
-                raise ValueError(f"Die Zahlung ({fmt_money(amount)}) ist höher als der offene Betrag "
-                                 f"({fmt_money(self.outstanding_amount(invoice))}).")
-            if amount < 0 and -amount > paid:
-                raise ValueError(f"Es können höchstens die erfassten Zahlungen ({fmt_money(paid)}) zurückgebucht werden.")
-            payment = Payment(invoice_id=invoice_id, payment_date=payment_date, amount=amount,
-                              note=(note or "").strip() or None, user=user or _current_user())
-            session.add(payment)
-            invoice.paid_amount = round_money(paid + amount)
-            outstanding = self.outstanding_amount(invoice)
-            if outstanding <= 0:
-                status = "Bezahlt"
-            elif invoice.paid_amount > 0:
-                status = "Teilbezahlt"
-            else:
-                status = "Offen"
-            kind = "Zahlung erfasst" if amount > 0 else "Zahlung zurückgebucht"
-            self._log(session, "Invoice", invoice_id,
-                      f"{kind}: {fmt_money(amount)} am {_naive(payment_date):%d.%m.%Y}, offen {fmt_money(outstanding)}", user)
-            if status != invoice.status:
-                self._log(session, "Invoice", invoice_id, f"Status: {invoice.status} -> {status}", user)
-                invoice.status = status
+            payment = self._apply_payment(session, session.get(Invoice, invoice_id), payment_date, note, user, reverse)
             session.flush()
             payment_id = payment.id
             self._commit(session, invoices=[invoice_id])
         # Taken back after the due date: overdue again
         self.refresh_overdue()
         return payment_id
+
+    def _apply_payment(self, session: Session, invoice: Invoice, payment_date: datetime, note: str = "",
+                       user: str = None, reverse: bool = False) -> Payment:
+        """
+        Within the caller's transaction: pays the whole open amount (status 'Bezahlt', paid_at = payment date) or,
+        with reverse, takes all payments back (status 'Offen'). Checks everything before it changes anything.
+        """
+        if not invoice:
+            raise GoBDError("Rechnung nicht gefunden.")
+        if not self.is_finalized(invoice) or invoice.cancels_invoice_id:
+            raise GoBDError("Zahlungen werden nur zu festgeschriebenen Rechnungen erfasst (nicht zu Entwürfen oder Stornorechnungen).")
+        if invoice.status == "Storniert":
+            raise GoBDError(f"Rechnung {invoice.invoice_number} ist storniert.")
+        paid = round_money(invoice.paid_amount or 0.0)
+        amount = -paid if reverse else self.outstanding_amount(invoice)
+        if reverse and not paid:
+            raise ValueError(f"Zu Rechnung {invoice.invoice_number} ist keine Zahlung erfasst.")
+        if not reverse and amount <= 0:
+            raise ValueError(f"Rechnung {invoice.invoice_number} ist bereits bezahlt.")
+        payment = Payment(invoice_id=invoice.id, payment_date=payment_date, amount=amount,
+                          note=(note or "").strip() or None, user=user or _current_user())
+        session.add(payment)
+        invoice.paid_amount = round_money(paid + amount)
+        invoice.paid_at = None if reverse else payment_date
+        status = "Offen" if reverse else "Bezahlt"
+        kind = "Zahlung zurückgebucht" if reverse else "Zahlung erfasst"
+        detail = f" ({note.strip()})" if note and note.strip() else ""
+        self._log(session, "Invoice", invoice.id, f"{kind}: {fmt_money(amount)} am {_naive(payment_date):%d.%m.%Y}{detail}", user)
+        if status != invoice.status:
+            self._log(session, "Invoice", invoice.id, f"Status: {invoice.status} -> {status}", user)
+            invoice.status = status
+        return payment
 
     def cancel_invoice(self, invoice_id: int, user: str = None) -> int:
         """GoBD/UStG: an issued invoice is cancelled by a Stornorechnung with negated amounts."""
@@ -1073,7 +1157,7 @@ class DBController:
         """Marks issued, unpaid invoices past their due date as overdue (cheap scan of the cache)."""
         now = datetime.now()
         overdue = [i.id for i in self._caches["invoices"].by_id.values()
-                   if i.status in ("Offen", "Teilbezahlt") and i.finalized_at and now > self.get_due_date(i)]
+                   if i.status == "Offen" and i.finalized_at and now > self.get_due_date(i)]
         if not overdue:
             return
         with self.get_session() as session:
@@ -1233,16 +1317,6 @@ class DBController:
             quote.status = status
             self._commit(session, quotes=[quote_id])
             return True
-
-    def archive_quote(self, quote_id: int, user: str = None):
-        with self.get_session() as session:
-            quote = session.get(Quote, quote_id)
-            if quote and not quote.archived_at:
-                quote.archived_at = datetime.now(timezone.utc)
-                self._log(session, "Quote", quote.id, "Archived", user)
-                self._commit(session, quotes=[quote_id])
-                return True
-            return False
 
     def delete_quote(self, quote_id: int, user: str = None) -> bool:
         with self.get_session() as session:

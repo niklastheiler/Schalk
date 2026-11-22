@@ -167,6 +167,12 @@ class MainWindow(FluentWindow):
                       isClosable=True, position=InfoBarPosition.TOP, duration=-1, parent=self)
 
     def closeEvent(self, event):
+        # Unsaved input in any tab: discard or stay (the window stays open)
+        for view in [self.stackedWidget.currentWidget()] + [self.stackedWidget.widget(i) for i in range(self.stackedWidget.count())]:
+            if not self.leave_allowed(view):
+                self.switchTo(view)
+                event.ignore()
+                return
         try:
             # Wait for the background writer so no change is lost
             self.db_controller.close()

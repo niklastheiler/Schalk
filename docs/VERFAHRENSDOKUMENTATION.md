@@ -26,7 +26,7 @@ am besten zusammen mit dem Steuerberater. Bei jeder neuen Schalk-Version prüfen
    Empfängerdaten ein, nimmt die Rechnung in die Hash-Kette auf, speichert sofort und archiviert das ZUGFeRD-PDF/A-3 schreibgeschützt.
 3. Danach ist die Rechnung unveränderbar. Korrektur nur über **Stornorechnung** (eigene Nummer, Typ 381, Bezug auf das
    Original) und, falls nötig, eine neue Rechnung.
-4. **Zahlungen** werden mit Betrag und Datum erfasst („Zahlung erfassen“ bzw. Status „Bezahlt/Teilbezahlt“). Der Status ergibt
+4. **Zahlungen**: „Als bezahlt markieren“ erfasst die Zahlung des ganzen Rechnungsbetrags mit Datum (Teilzahlungen gibt es nicht). Eine Bareinnahme im Kassenbuch zu einer Rechnung wird beim Festschreiben des Kassenbuchs als Zahlung gebucht, ihr Storno bucht sie zurück. Der Status ergibt
    sich aus der Summe der Zahlungen. Eine Rücklastschrift wird als negative Zahlung gebucht, Zahlungen werden nie geändert oder gelöscht.
 5. Das **PDF-Symbol** rechts neben dem Status druckt festgeschriebene Rechnungen, Angebote und die zuletzt erstellte Mahnung.
    Bei Entwürfen ist es ausgegraut.
