@@ -18,6 +18,8 @@ DefaultDirName={autopf}\Schalk
 DefaultGroupName=Schalk
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
+; Windows 11 only (build 22000 and later); Windows 10 is not supported
+MinVersion=10.0.22000
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist

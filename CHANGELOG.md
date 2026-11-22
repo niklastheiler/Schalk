@@ -10,6 +10,7 @@
 - Trennlinie zwischen Kundendaten und Rechnungs-/Angebotsdaten
 - Schmale Fenster: Filter und Suche rücken in eine eigene Zeile, Spalten wie „Firma“ werden nicht mehr abgeschnitten
 - Technische Basis: Python 3.15, aktualisierte Bibliotheken
+- Nur noch Windows 11: Windows 10 wird nicht mehr unterstützt, das Setup lässt sich dort nicht mehr installieren
 
 ## 1.3.1
 

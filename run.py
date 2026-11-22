@@ -4,6 +4,12 @@ if sys.version_info < (3, 15):
     sys.exit("Schalk benötigt Python 3.15.")
 if sys.platform != "win32":
     sys.exit("Schalk läuft ausschließlich unter Windows.")
+# Windows 11 starts with build 22000; Windows 10 is not supported
+if sys.getwindowsversion().build < 22000:
+    import ctypes
+    message = "Schalk benötigt Windows 11. Windows 10 wird nicht unterstützt."
+    ctypes.windll.user32.MessageBoxW(None, message, "Schalk", 0x10) # MB_ICONERROR
+    sys.exit(message)
 
 if __name__ == '__main__' and "--selbsttest" in sys.argv:
     # Check of the built EXE in a temporary data folder (set before src.utils.paths is imported)
