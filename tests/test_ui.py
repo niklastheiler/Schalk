@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from PySide6.QtCore import Qt
 from qfluentwidgets import RoundMenu
+from receipts import RECEIPT
 
 
 def _menu_texts(page, record):
@@ -81,6 +82,7 @@ def test_reminders_cashbook_customers(window, controller, qapp):
     cb = window.cashbook_interface
     window.switchTo(cb)
     cb.amountEdit.setText("250,00")
+    cb.attachment_path = RECEIPT
     cb.add_entry()
     qapp.processEvents()
     assert cb.model.rowCount() == 1 and "250,00" in cb.balanceLabel.text()

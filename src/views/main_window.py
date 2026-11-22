@@ -22,6 +22,10 @@ MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "Au
                "November", "Dezember"]
 
 
+# Narrowest window (in logical pixels) in which the expanded menu stays beside the pages
+NAVIGATION_INLINE_WIDTH = 1100
+
+
 class MainWindow(FluentWindow):
     integrityChecked = Signal(list)
 
@@ -67,8 +71,11 @@ class MainWindow(FluentWindow):
             setThemeColor(document_color(name))
 
     def init_window(self):
-        self.resize(1280, 820)
-        self.setMinimumWidth(900)
+        # With a large interface (setting "Darstellung" or Windows display scaling) the screen offers fewer
+        # logical pixels: the window never asks for more than the screen has
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.resize(min(1280, screen.width()), min(820, screen.height()))
+        self.setMinimumWidth(min(900, screen.width()))
         self.setWindowTitle('Schalk')
         setTheme(Theme.LIGHT)
         # The colour chosen in the settings is the accent of the program as well as of the documents
@@ -76,8 +83,9 @@ class MainWindow(FluentWindow):
         SignalBus.get().settingsChanged.connect(self.apply_color)
         self.navigationInterface.setExpandWidth(240)
         # The menu stays expanded down to the minimum window width (the default collapses it below ~1000 px)
-        self.navigationInterface.setMinimumExpandWidth(self.minimumWidth())
-        screen = QApplication.primaryScreen().availableGeometry()
+        # Below this width (large interface on a small screen) the menu stays collapsed to icons and opens over the
+        # content, so the pages keep enough room
+        self.navigationInterface.setMinimumExpandWidth(NAVIGATION_INLINE_WIDTH)
         self.move(screen.center().x() - self.width() // 2, screen.center().y() - self.height() // 2)
 
     def showEvent(self, event):
@@ -85,7 +93,8 @@ class MainWindow(FluentWindow):
         if not getattr(self, "_navigation_expanded", False):
             # Expanded on start; afterwards the menu button collapses and expands it as usual
             self._navigation_expanded = True
-            QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
+            if self.width() >= NAVIGATION_INLINE_WIDTH:
+                QTimer.singleShot(0, self, lambda: self.navigationInterface.expand(useAni=False))
 
     def _guard_tab_changes(self):
         """

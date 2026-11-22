@@ -2,13 +2,14 @@ from datetime import datetime
 import pytest
 from src.controllers.db_controller import GoBDError
 from src.models.database import CashbookEntry
+from receipts import RECEIPT
 
 
 def test_drafts_are_editable_until_finalized(controller):
     c = controller
-    late = c.add_cashbook_entry(datetime(2026, 10, 5), 100, "Einnahme spät", "A", "Einnahme", 19)
-    early = c.add_cashbook_entry(datetime(2026, 10, 1), 50, "Tippfehler", "A", "Einnahme", 19)
-    wrong = c.add_cashbook_entry(datetime(2026, 10, 2), 10, "Falsch", "A", "Barentnahme Firma", 19)
+    late = c.add_cashbook_entry(datetime(2026, 10, 5), 100, "Einnahme spät", "A", "Einnahme", 19, attachment_source=RECEIPT)
+    early = c.add_cashbook_entry(datetime(2026, 10, 1), 50, "Tippfehler", "A", "Einnahme", 19, attachment_source=RECEIPT)
+    wrong = c.add_cashbook_entry(datetime(2026, 10, 2), 10, "Falsch", "A", "Barentnahme Firma", 19, attachment_source=RECEIPT)
     assert c.get_cashbook_entry(early).receipt_number is None and c.cashbook_draft_count() == 3
 
     c.update_cashbook_entry(early, datetime(2026, 10, 1), 60, "Einlage", "Einnahme")
@@ -30,14 +31,14 @@ def test_drafts_are_editable_until_finalized(controller):
     c.storno_cashbook_entry(early)
 
     # Later drafts continue the existing chain
-    c.add_cashbook_entry(datetime(2026, 10, 6), 5, "Nachtrag", "A", "Einnahme", 19)
+    c.add_cashbook_entry(datetime(2026, 10, 6), 5, "Nachtrag", "A", "Einnahme", 19, attachment_source=RECEIPT)
     c.finalize_cashbook()
     assert c.verify_integrity() == []
 
 
 def test_tampering_with_finalized_entry_is_detected(controller):
     c = controller
-    entry_id = c.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19)
+    entry_id = c.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
     c.finalize_cashbook()
     with c.get_session() as session:
         session.get(CashbookEntry, entry_id).amount = 999
@@ -52,6 +53,10 @@ def test_cashbook_ui_edit_and_finalize(window, controller, qapp, monkeypatch):
     window.switchTo(cb)
     cb.amountEdit.setText("40,00")
     cb.descEdit.setText("Erst")
+    cb.add_entry() # without a receipt: refused
+    qapp.processEvents()
+    assert cb.model.rowCount() == 0
+    cb.attachment_path = RECEIPT
     cb.add_entry()
     qapp.processEvents()
     entry = cb.model.record(0)
@@ -74,10 +79,10 @@ def test_cashbook_ui_edit_and_finalize(window, controller, qapp, monkeypatch):
 def test_cash_balance_never_negative_on_any_day(controller):
     # GoBD: the till can never hold less than nothing, also not on a day before a later income
     c = controller
-    income = c.add_cashbook_entry(datetime(2026, 10, 10), 100, "Einlage", "A", "Einnahme", 19)
+    income = c.add_cashbook_entry(datetime(2026, 10, 10), 100, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
     with pytest.raises(ValueError, match="am 09.10.2026"):
-        c.add_cashbook_entry(datetime(2026, 10, 9), 50, "Rückdatiert", "A", "Barentnahme Firma", 19)
-    withdrawal = c.add_cashbook_entry(datetime(2026, 10, 11), 50, "Porto", "A", "Barentnahme Firma", 19)
+        c.add_cashbook_entry(datetime(2026, 10, 9), 50, "Rückdatiert", "A", "Barentnahme Firma", 19, attachment_source=RECEIPT)
+    withdrawal = c.add_cashbook_entry(datetime(2026, 10, 11), 50, "Porto", "A", "Barentnahme Firma", 19, attachment_source=RECEIPT)
     # Moving the withdrawal before the income or removing the income would leave the till negative
     with pytest.raises(ValueError, match="negativ"):
         c.update_cashbook_entry(withdrawal, datetime(2026, 10, 9), 50, "Porto", "Barentnahme Firma")
@@ -93,7 +98,7 @@ def test_clock_set_back_does_not_break_the_cashbook_chain(controller, monkeypatc
     from datetime import timedelta
     from src.controllers import db_controller
     c = controller
-    first = c.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19)
+    first = c.add_cashbook_entry(datetime(2026, 10, 1), 100, "Einlage", "A", "Einnahme", 19, attachment_source=RECEIPT)
     c.finalize_cashbook()
 
     class EarlierClock(datetime):
@@ -101,7 +106,7 @@ def test_clock_set_back_does_not_break_the_cashbook_chain(controller, monkeypatc
         def now(cls, tz=None):
             return datetime.now(tz) - timedelta(hours=1) # end of daylight saving time
     monkeypatch.setattr(db_controller, "datetime", EarlierClock)
-    second = c.add_cashbook_entry(datetime(2026, 10, 2), 10, "Einnahme", "A", "Einnahme", 19)
+    second = c.add_cashbook_entry(datetime(2026, 10, 2), 10, "Einnahme", "A", "Einnahme", 19, attachment_source=RECEIPT)
     c.finalize_cashbook()
     c.storno_cashbook_entry(second)
     assert c.get_cashbook_entry(second).finalized_at > c.get_cashbook_entry(first).finalized_at

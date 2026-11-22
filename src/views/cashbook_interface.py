@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, PushButton, RoundMenu, SubtitleLabel, TransparentToolButton
 from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDError
@@ -26,8 +27,8 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self._cancelled = set()
         columns = [
             Column("Datum", lambda e: fmt_date(e.entry_date), sort=lambda e: (e.entry_date, e.id), width=115, descending=True),
-            Column("Beleg-Nr", lambda e: e.receipt_number or "Entwurf", sort=lambda e: e.receipt_number or "~", width=150, descending=True),
-            Column("Art", lambda e: e.entry_type + (" (Storno)" if e.is_storno else ""), width=190),
+            Column("Beleg-Nr", lambda e: e.receipt_number or "Entwurf", sort=lambda e: e.receipt_number or "~", width=140, descending=True),
+            Column("Art", lambda e: e.entry_type + (" (Storno)" if e.is_storno else ""), width=170),
             Column("Beschreibung", lambda e: e.description or ""),
             Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, descending=True),
             Column("GoBD-Hash", lambda e: f"{e.hash_chain[:8]}…{e.hash_chain[-8:]}" if e.hash_chain else "–", width=170),
@@ -63,7 +64,9 @@ class CashbookInterface(UnsavedChanges, ListPage):
         labeled("Betrag (€)", self.amountEdit)
         self.descEdit = LineEdit()
         self.descEdit.setPlaceholderText("Buchungstext")
-        self.descEdit.setMinimumWidth(160)
+        # A short text is enough; the receipt field follows right next to it
+        self.descEdit.setMinimumWidth(250)
+        self.descEdit.setMaximumWidth(375)
         self.typeCombo = ComboBox()
         self.typeCombo.addItems(CASHBOOK_TYPES)
         labeled("Art", self.typeCombo)
@@ -73,14 +76,14 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.invoiceBox = QWidget()
         invoice_layout = QVBoxLayout(self.invoiceBox)
         invoice_layout.setContentsMargins(0, 0, 0, 0)
-        invoice_layout.addWidget(BodyLabel("Rechnung (optional)"))
+        invoice_layout.addWidget(BodyLabel("Rechnung"))
         self.invoiceCombo = ComboBox()
         self.invoiceCombo.setMinimumWidth(180)
         self.invoiceCombo.setMaximumWidth(260)
         self.invoiceCombo.currentIndexChanged.connect(self._on_invoice_chosen)
         invoice_layout.addWidget(self.invoiceCombo)
 
-        # Barentnahme Firma: receipt (optional); Barentnahme Privat has none
+        # Einnahme and Barentnahme Firma: receipt required (for an invoice its PDF); Barentnahme Privat has none
         self.attachBox = QWidget()
         attach_box = QVBoxLayout(self.attachBox)
         attach_box.setContentsMargins(0, 0, 0, 0)
@@ -88,9 +91,10 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.attachBtn = TransparentToolButton(FIF.LINK)
         self.attachBtn.clicked.connect(self.attach_file)
         self.attachLabel = BodyLabel("Kein Anhang")
+        self.attachLabel.setMaximumWidth(self.ATTACHMENT_LABEL_WIDTH + 10)
         attach.addWidget(self.attachBtn)
         attach.addWidget(self.attachLabel)
-        attach_box.addWidget(BodyLabel("Beleg (optional)"))
+        attach_box.addWidget(BodyLabel("Beleg"))
         attach_box.addLayout(attach)
         self.typeCombo.currentTextChanged.connect(self._on_type_changed)
         self.cancelEditBtn = PushButton("Abbrechen")
@@ -109,10 +113,12 @@ class CashbookInterface(UnsavedChanges, ListPage):
         description_box.addWidget(BodyLabel("Beschreibung"))
         description_box.addWidget(self.descEdit)
         description_row = QHBoxLayout()
-        description_row.addLayout(description_box, 1)
-        description_row.addWidget(self.invoiceBox)
+        description_row.setSpacing(16)
+        description_row.addLayout(description_box)
         description_row.addWidget(self.attachBox)
+        description_row.addWidget(self.invoiceBox)
         description_row.addWidget(self.cancelEditBtn, 0, Qt.AlignBottom)
+        description_row.addStretch(1)
         rows = QVBoxLayout()
         rows.setSpacing(8)
         rows.addLayout(form)
@@ -142,22 +148,35 @@ class CashbookInterface(UnsavedChanges, ListPage):
     def _on_type_changed(self, entry_type: str):
         income = entry_type == INCOME
         self.invoiceBox.setVisible(income)
-        self.attachBox.setVisible(entry_type == EXPENSE)
+        self.attachBox.setVisible(income or entry_type == EXPENSE)
         if not income and self.invoice_id:
             self.invoiceCombo.setCurrentIndex(0)
         if entry_type == "Barentnahme Privat" and self.attachment_path:
             # A private withdrawal has no receipt
             self.attachment_path = ""
+            self._show_attachment("")
+
+    ATTACHMENT_LABEL_WIDTH = 220
+
+    def _show_attachment(self, path: str, name: str = None):
+        """Short name of the receipt next to the button (archived names are long), the full path as tooltip."""
+        if not path:
             self.attachLabel.setText("Kein Anhang")
-        if income and not self.invoice_id:
-            self.attachment_path = ""
+            self.attachLabel.setToolTip("")
+            return
+        name = name or os.path.basename(path)
+        metrics = QFontMetrics(self.attachLabel.font())
+        self.attachLabel.setText(metrics.elidedText(name, Qt.ElideMiddle, self.ATTACHMENT_LABEL_WIDTH))
+        self.attachLabel.setToolTip(path)
 
     def _on_invoice_chosen(self, index: int):
         """Takes over amount, text and the invoice PDF (as receipt) of the chosen invoice."""
         invoice_id = self.invoiceCombo.itemData(index)
-        self.invoice_id = invoice_id
+        previous, self.invoice_id = self.invoice_id, invoice_id
         if not invoice_id:
-            self.attachment_path = ""
+            if previous: # the PDF of the deselected invoice is no receipt any more
+                self.attachment_path = ""
+                self._show_attachment("")
             return
         c = self.db_controller
         invoice = c.get_invoice(invoice_id)
@@ -167,6 +186,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
             self.attachment_path = c.get_archived_invoice_pdf(invoice) or ""
         except GoBDError:
             self.attachment_path = ""
+        self._show_attachment(self.attachment_path, f"Rechnung {invoice.invoice_number}.pdf")
 
     def records(self) -> list:
         return self.db_controller.get_cashbook_entries()
@@ -217,7 +237,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
             return
         if path:
             self.attachment_path = path
-            self.attachLabel.setText(os.path.basename(path))
+            self._show_attachment(path)
             self.fill_from_receipt(path)
 
     def fill_from_receipt(self, path: str):
@@ -277,7 +297,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self._fill_invoice_combo(keep_id=entry.invoice_id)
         self.invoice_id = entry.invoice_id
         self.attachment_path = ""
-        self.attachLabel.setText(os.path.basename(entry.attachment_path) if entry.attachment_path else "Kein Anhang")
+        self._show_attachment(entry.attachment_path or "")
         self.addBtn.setText("Änderung speichern")
         self.cancelEditBtn.show()
         self.amountEdit.setFocus()
@@ -290,7 +310,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.amountEdit.clear()
         self.descEdit.clear()
         self.attachment_path = ""
-        self.attachLabel.setText("Kein Anhang")
+        self._show_attachment("")
         self.addBtn.setText("Eintrag hinzufügen")
         self.cancelEditBtn.hide()
         self.mark_clean()
