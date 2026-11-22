@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3
+
+- Oberfläche fest in 125 % Größe; die Einstellung „Darstellung“ entfällt
+- Auswertung: die Monatsbeschriftung „Dez“ wird nicht mehr abgeschnitten
+
 ## 1.4.2
 
 - Update: Wurde ein bereits heruntergeladenes Update direkt beim Start mit „Jetzt neu starten“ bestätigt, blieb Schalk ohne Fenster im Hintergrund hängen und das Update wurde nicht installiert
