@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 from PySide6.QtCore import QDate, Qt
@@ -6,11 +7,14 @@ from qfluentwidgets import BodyLabel, ComboBox, FluentIcon as FIF, LineEdit, Pus
 from src.controllers.db_controller import CASHBOOK_TYPES, DBController, GoBDError
 from src.utils import paths
 from src.utils.archive import is_pdf
+from src.utils.receipt_recognition import INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
 from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
 from src.views.invoice_interface import RIGHT, MonthDialog, add_action
+
+logger = logging.getLogger(__name__)
 
 
 class CashbookInterface(ListPage):
@@ -123,6 +127,27 @@ class CashbookInterface(ListPage):
         if path:
             self.attachment_path = path
             self.attachLabel.setText(os.path.basename(path))
+            self.fill_from_receipt(path)
+
+    def fill_from_receipt(self, path: str):
+        """
+        Takes amount, description and type from the receipt: an invoice issued by Schalk is income, everything else
+        an expense. Values the user already typed are kept; the type always follows the receipt.
+        """
+        try:
+            guess = recognize_receipt(self.db_controller, path)
+        except Exception:
+            logger.exception("Beleg %s konnte nicht ausgewertet werden", path)
+            return
+        self.typeCombo.setCurrentText(guess.entry_type)
+        if guess.amount > 0 and not _parse_number(self.amountEdit.text(), 0.0):
+            self.amountEdit.setText(f"{guess.amount:.2f}".replace(".", ","))
+        if guess.description and not self.descEdit.text().strip():
+            self.descEdit.setText(guess.description)
+        if guess.receipt_date and self.editing_id is None:
+            self.datePicker.setDate(QDate(guess.receipt_date.year, guess.receipt_date.month, guess.receipt_date.day))
+        kind = "Einnahme aus eigener Rechnung" if guess.entry_type == INCOME else "Ausgabe"
+        notify_success(self, "Beleg ausgewertet", f"{kind} erkannt. Bitte Betrag und Beschreibung prüfen.")
 
     def add_entry(self):
         amount = _parse_number(self.amountEdit.text(), 0.0)
