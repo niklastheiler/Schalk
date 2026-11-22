@@ -71,8 +71,8 @@ class MainWindow(FluentWindow):
             setThemeColor(document_color(name))
 
     def init_window(self):
-        # With a large interface (setting "Darstellung" or Windows display scaling) the screen offers fewer
-        # logical pixels: the window never asks for more than the screen has
+        # The interface is enlarged (see main.UI_SCALE) and Windows may scale as well: the window never asks for
+        # more than the screen has
         screen = QApplication.primaryScreen().availableGeometry()
         self.resize(min(1280, screen.width()), min(820, screen.height()))
         self.setMinimumWidth(min(900, screen.width()))
@@ -82,9 +82,7 @@ class MainWindow(FluentWindow):
         self.apply_color()
         SignalBus.get().settingsChanged.connect(self.apply_color)
         self.navigationInterface.setExpandWidth(240)
-        # The menu stays expanded down to the minimum window width (the default collapses it below ~1000 px)
-        # Below this width (large interface on a small screen) the menu stays collapsed to icons and opens over the
-        # content, so the pages keep enough room
+        # Below this width the menu stays collapsed to icons and opens over the content, so the pages keep room
         self.navigationInterface.setMinimumExpandWidth(NAVIGATION_INLINE_WIDTH)
         self.move(screen.center().x() - self.width() // 2, screen.center().y() - self.height() // 2)
 

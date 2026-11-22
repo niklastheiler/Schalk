@@ -18,6 +18,8 @@ from src.version import APP_NAME, APP_VERSION
 logger = logging.getLogger(__name__)
 APP_ID = "Schalk.Rechnungsprogramm"
 APP_ICON = os.path.join(os.path.dirname(__file__), "resources", "icons", "schalk.ico")
+# The whole interface (text, fields, icons) is shown at 125 %: Qt scales everything evenly, so layouts stay intact
+UI_SCALE = "1.25"
 
 
 def _set_windows_app_id():
@@ -84,9 +86,8 @@ def main():
     setup_logging()
     install_excepthook()
     _set_windows_app_id()
-    # Size of the interface chosen in the settings (100-200 %); must happen before the QApplication exists
-    from src.utils.ui_scale import apply_before_start
-    apply_before_start()
+    # Must be set before the QApplication exists; a factor set from outside wins
+    os.environ.setdefault("QT_SCALE_FACTOR", UI_SCALE)
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)

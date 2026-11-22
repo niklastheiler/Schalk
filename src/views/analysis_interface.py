@@ -29,7 +29,8 @@ class ChartCard(CardWidget):
         self.chart = QChart()
         self.chart.setBackgroundVisible(False)
         self.chart.layout().setContentsMargins(0, 0, 0, 0)
-        self.chart.setMargins(QMargins(0, 0, 0, 0))
+        # Room on the right: the label of the last month ("Dez") is centred on the edge of the plot
+        self.chart.setMargins(QMargins(0, 0, 24, 0))
         self.chartView = QChartView(self.chart, self)
         self.chartView.setRenderHint(QPainter.Antialiasing)
         self.chartView.setStyleSheet("background: transparent;")
