@@ -18,13 +18,7 @@ if %errorlevel% neq 0 (
     goto :error
 )
 
-rem Extensions built for the stable ABI of Python 3.15 (abi3t, e.g. cryptography) need python3t.dll,
-rem which PyInstaller does not bundle by itself: without it Schalk.exe cannot load them
-set EXTRA_BINARIES=
-for /f "delims=" %%i in ('python -c "import os, sys; print(os.path.join(sys.base_prefix, 'python3t.dll'))"') do set PYTHON3T=%%i
-if exist "%PYTHON3T%" set EXTRA_BINARIES=--add-binary "%PYTHON3T%;."
-
-pyinstaller %EXTRA_BINARIES% --noconfirm --clean --windowed --name Schalk --icon src\resources\icons\schalk.ico ^
+pyinstaller --noconfirm --clean --windowed --name Schalk --icon src\resources\icons\schalk.ico ^
     --collect-all saxonche ^
     --collect-data facturx ^
     --collect-data iso4217 ^
@@ -33,6 +27,7 @@ pyinstaller %EXTRA_BINARIES% --noconfirm --clean --windowed --name Schalk --icon
     --collect-data stdnum ^
     --collect-data qfluentwidgets ^
     --add-data "src\resources;src\resources" ^
+    --additional-hooks-dir tools\pyinstaller_hooks ^
     run.py
 if %errorlevel% neq 0 (
     echo PyInstaller fehlgeschlagen ^(Exitcode %errorlevel%^)
