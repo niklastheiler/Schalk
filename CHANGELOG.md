@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.5
+
+- Behoben: Nach einem Update blieb das Fenster beim ersten Start grau und reagierte nicht. Die Prüfregeln für E-Rechnungen werden jetzt erst beim ersten Festschreiben geladen.
+- Die Backup-Erinnerung erscheint erst, wenn das Fenster sichtbar ist.
+
 ## 1.4.4
 
 - PDF-Symbol öffnet nur noch „Speichern unter“, ohne dass Adobe Acrobat mit aufgeht
