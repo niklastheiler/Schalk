@@ -336,3 +336,25 @@ def test_editor_separator_and_program_color(window, controller, qapp):
     controller.set_settings({"document_color": "Bordeaux"})
     qapp.processEvents()
     assert themeColor().name().lower() == DOCUMENT_COLORS["Bordeaux"].lower()
+
+
+def test_tax_number_is_formatted_while_typing(window, qapp):
+    from PySide6.QtTest import QTest
+    edit = window.settings_interface.edits["tax_id"]
+    edit.clear()
+    edit.setFocus()
+    QTest.keyClicks(edit, "12")
+    assert edit.text() == "12/"
+    # A slash typed by the user is ignored
+    QTest.keyClicks(edit, "/345/67890")
+    assert edit.text() == "12/345/67890"
+    # 11 digits: grouped 3/3/5
+    QTest.keyClicks(edit, "1")
+    assert edit.text() == "123/456/78901"
+    QTest.keyClick(edit, Qt.Key_Backspace)
+    assert edit.text() == "12/345/67890"
+    # Backspace behind an inserted slash removes the digit in front of it
+    edit.clear()
+    QTest.keyClicks(edit, "12")
+    QTest.keyClick(edit, Qt.Key_Backspace)
+    assert edit.text() == "1"

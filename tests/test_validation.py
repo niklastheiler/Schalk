@@ -37,3 +37,13 @@ def test_contact_problems_name_the_field():
     problems = contact_problems({"postal_code": "123", "phone": "abc", "email": "x"}, "des Kunden")
     assert len(problems) == 3 and all("des Kunden" in p for p in problems)
     assert contact_problems({"postal_code": "", "phone": "", "email": ""}, "des Kunden") == []
+
+
+@pytest.mark.parametrize("typed,shown", [
+    ("1", "1"), ("12", "12/"), ("12/", "12/"), ("123", "12/3"), ("12//3", "12/3"), ("12345", "12/345/"),
+    ("1234567890", "12/345/67890"), ("12345678901", "123/456/78901"), ("1234567890123", "1234567890123"),
+    ("12345678901234", "1234567890123"),
+])
+def test_tax_number_format(typed, shown):
+    from src.utils.validation import format_tax_number
+    assert format_tax_number(typed) == shown

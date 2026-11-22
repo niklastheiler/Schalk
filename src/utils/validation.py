@@ -62,3 +62,62 @@ def postal_code_validator(parent=None):
 
 def phone_validator(parent=None):
     return _validator(r"\+?[0-9 ()/\-]{0,24}", parent)
+
+
+def format_tax_number(text: str) -> str:
+    """
+    Steuernummer as the tax office writes it, from the digits typed so far. Separators typed by the user are
+    ignored. Up to 10 digits: 12/345/67890 (a slash already appears after the 2nd and 5th digit); 11 digits:
+    123/456/78901; 12 or 13 digits: the federal format without separators.
+    """
+    digits = "".join(ch for ch in text if ch.isdigit())[:13]
+    if len(digits) <= 10:
+        groups = (2, 3)
+    elif len(digits) == 11:
+        groups = (3, 3)
+    else:
+        return digits
+    parts, rest = [], digits
+    for size in groups:
+        if len(rest) < size:
+            break
+        parts.append(rest[:size])
+        rest = rest[size:]
+    # Typed digits fill a group completely: the slash appears right away
+    return "/".join(parts) + "/" + rest if parts else rest
+
+
+def attach_tax_number_format(edit):
+    """Formats a Steuernummer field while typing; the cursor stays behind the same digit."""
+    # textChanged comes before textEdited: "previous" is the text before the current edit
+    state = {"text": edit.text(), "previous": edit.text()}
+
+    def on_changed(text: str):
+        state["previous"], state["text"] = state["text"], text
+
+    def on_edited(text: str):
+        old = state["previous"]
+        digits_before_cursor = sum(ch.isdigit() for ch in text[:edit.cursorPosition()])
+        # Backspace on a slash the program inserted: removes the digit in front of it instead
+        if len(text) < len(old) and sum(ch.isdigit() for ch in text) == sum(ch.isdigit() for ch in old):
+            position = edit.cursorPosition()
+            before = text[:position]
+            index = max((i for i, ch in enumerate(before) if ch.isdigit()), default=None)
+            if index is not None:
+                text = text[:index] + text[index + 1:]
+                digits_before_cursor -= 1
+        formatted = format_tax_number(text)
+        if formatted != edit.text():
+            edit.setText(formatted)
+        # Cursor behind the same digit as before (and behind a slash that follows it)
+        position, seen = 0, 0
+        while position < len(formatted) and seen < digits_before_cursor:
+            seen += formatted[position].isdigit()
+            position += 1
+        while position < len(formatted) and formatted[position] == "/" and position == len(formatted) - 1:
+            position += 1
+        edit.setCursorPosition(position)
+
+    edit.textEdited.connect(on_edited)
+    edit.textChanged.connect(on_changed)
+    edit.setValidator(_validator(r"[0-9/ ]{0,20}", edit))

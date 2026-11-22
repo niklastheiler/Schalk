@@ -10,7 +10,8 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayou
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SubtitleLabel
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
-from src.utils.validation import contact_problems, german_postal_code_validator, is_valid_tax_number, phone_validator
+from src.utils.validation import (attach_tax_number_format, contact_problems, german_postal_code_validator,
+                                  is_valid_tax_number, phone_validator)
 from src.controllers.db_controller import DBController, DEFAULT_PAYMENT_TERMS
 from src.utils import paths
 from src.utils.backup import create_backup, restore_backup
@@ -144,6 +145,8 @@ class SettingsInterface(QWidget):
         self.edits["postal_code"].setValidator(german_postal_code_validator(self))
         self.edits["phone"].setValidator(phone_validator(self))
         self.edits["tax_id"].setPlaceholderText("z. B. 12/345/67890")
+        # The slashes of the tax office format are inserted automatically
+        attach_tax_number_format(self.edits["tax_id"])
         self.edits["vat_id"].setPlaceholderText("z. B. DE123456789")
         return tab
 
