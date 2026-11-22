@@ -1,6 +1,6 @@
 import logging
 import threading
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from qfluentwidgets import InfoBar, InfoBarPosition, MessageBox
 from src.utils import updater
 from src.version import APP_VERSION
@@ -37,7 +37,9 @@ class UpdateNotifier(QObject):
             logger.exception("Alte Updates konnten nicht gelöscht werden")
         staged = updater.staged_version()
         if staged:
-            self.ready.emit(staged)
+            # Asked only once the event loop runs: answered with "Jetzt neu starten" during the start, the window
+            # closed before the loop began, so the process stayed without a window and the setup could not close it
+            QTimer.singleShot(0, self, lambda: self.ready.emit(staged))
             return
         self._start_check(manual=False)
 

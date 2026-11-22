@@ -152,3 +152,18 @@ def test_manual_check_reports_errors(window, qapp, monkeypatch):
     window.updates._check_and_download(manual=True)
     qapp.processEvents()
     assert shown == ["Update-Prüfung fehlgeschlagen: keine Verbindung"]
+
+
+def test_update_downloaded_earlier_is_offered_only_once_the_program_runs(window, qapp, monkeypatch):
+    """1.4.1: answered during the start, "Jetzt neu starten" left a process without a window behind."""
+    from qfluentwidgets import MessageBox
+    asked = []
+    monkeypatch.setattr(updater, "is_installed", lambda: True)
+    monkeypatch.setattr(updater, "remove_installed_updates", lambda: None)
+    monkeypatch.setattr(updater, "staged_version", lambda: "9.9")
+    monkeypatch.setattr(updater, "apply_on_exit", lambda version, restart: None)
+    monkeypatch.setattr(MessageBox, "exec", lambda self: asked.append(self) or 0) # "Später"
+    window.updates.start()
+    assert asked == [] # not during the start
+    qapp.processEvents()
+    assert len(asked) == 1 and window.updates.pending_version == "9.9"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2
+
+- Update: Wurde ein bereits heruntergeladenes Update direkt beim Start mit „Jetzt neu starten“ bestätigt, blieb Schalk ohne Fenster im Hintergrund hängen und das Update wurde nicht installiert
+- Update: Andere geöffnete Programme (z. B. Adobe Acrobat) verhindern die Installation nicht mehr
+
 ## 1.4.1
 
 - Kassenbuch: Beleg ist Pflicht bei „Einnahme“ und „Barentnahme Firma“ (bei einer Einnahme zu einer Rechnung zählt deren PDF als Beleg)

@@ -33,6 +33,9 @@ SetupIconFile=..\src\resources\icons\schalk.ico
 ; A running Schalk is closed before its files are replaced
 CloseApplications=yes
 RestartApplications=no
+; Only a running Schalk counts. With the default filter (*.exe,*.dll,*.chm) the Restart Manager also listed other
+; programs (e.g. Adobe Acrobat) and the silent update aborted because it may not close them
+CloseApplicationsFilter=*.exe
 
 [Languages]
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
