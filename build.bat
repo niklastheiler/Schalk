@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 if not exist venv (
     rem Without the Python launcher (e.g. on the GitHub build server) the python on the PATH is used
-    py -3.14 -m venv venv 2>nul || python -m venv venv || goto :error
+    py -3.15 -m venv venv 2>nul || python -m venv venv || goto :error
 )
 call venv\Scripts\activate.bat || goto :error
 python -m pip install --upgrade pip || goto :error

@@ -14,12 +14,12 @@ Ab Version 1.2 prüft Schalk bei jedem Start im Hintergrund, ob es auf GitHub ei
 
 ## Start aus dem Quellcode
 
-Voraussetzung: **Python 3.14** (64 Bit) von python.org. Python 3.15 wird noch nicht unterstützt, weil Saxon-HE (EN-16931-Prüfung) dafür noch kein Paket anbietet.
+Voraussetzung: **Python 3.15** (64 Bit) von python.org.
 
 ```powershell
 git clone https://github.com/niklastheiler/Schalk.git
 cd Schalk
-py -3.14 -m venv venv
+py -3.15 -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python run.py
