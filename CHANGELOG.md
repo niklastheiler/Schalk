@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+- Kassenbuch: Beleg ist Pflicht bei „Einnahme“ und „Barentnahme Firma“ (bei einer Einnahme zu einer Rechnung zählt deren PDF als Beleg)
+- Kassenbuch: kompakteres Formular, das Beleg-Feld steht direkt neben der Beschreibung
+- Neue Einstellung „Darstellung“: Schriftgröße 100 bis 200 % (wirksam nach Neustart); in schmalen Fenstern bleibt das Menü eingeklappt
+
 ## 1.4
 
 - Zahlungen: „Als bezahlt markieren“ fragt das Datum des Zahlungseingangs ab; neue Spalte „Bezahlt am“ bei den Kundenrechnungen. „Teilbezahlt“ gibt es nicht mehr, Rechnungen mit diesem Status sind wieder „Offen“. Eine Rücklastschrift (zurück auf „Offen“) wird nachvollziehbar zurückgebucht
