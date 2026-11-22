@@ -117,7 +117,7 @@ def main():
     window.showMaximized()
     window.check_integrity_on_startup()
     window.updates.start()
-    QTimer.singleShot(500, window, window.remind_of_backup)
+    QTimer.singleShot(1000, window, window.remind_of_backup_when_ready)
     threading.Thread(target=_warm_up, name="schalk-warm-up", daemon=True).start()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 

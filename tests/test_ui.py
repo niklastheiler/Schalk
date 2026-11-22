@@ -360,3 +360,18 @@ def test_tax_number_is_formatted_while_typing(window, qapp):
     QTest.keyClicks(edit, "12")
     QTest.keyClick(edit, Qt.Key_Backspace)
     assert edit.text() == "1"
+
+
+def test_backup_reminder_waits_until_the_window_is_on_screen(window, qapp, monkeypatch):
+    shown = []
+    monkeypatch.setattr(window, "remind_of_backup", lambda: shown.append(True))
+    window.hide()
+    window.remind_of_backup_when_ready(attempts=1)
+    qapp.processEvents()
+    assert shown == [] # hidden window: not now (retried later)
+    window.show()
+    qapp.processEvents()
+    from PySide6.QtTest import QTest
+    window.remind_of_backup_when_ready()
+    QTest.qWait(400)
+    assert shown == [True]
