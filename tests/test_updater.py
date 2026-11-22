@@ -10,7 +10,7 @@ SHA = hashlib.sha256(PAYLOAD).hexdigest()
 
 
 def _release_json(version="1.2", **asset):
-    data = {"name": f"Schalk-Setup-v{version}.exe", "browser_download_url": f"https://example.org/v{version}.exe",
+    data = {"name": f"Schalk-Setup-v{version}.exe", "browser_download_url": f"{updater.DOWNLOAD_PREFIX}v{version}/Schalk-Setup-v{version}.exe",
             "size": len(PAYLOAD), "digest": f"sha256:{SHA}"}
     data.update(asset)
     return {"tag_name": f"v{version}", "body": "Neu: Updates", "draft": False, "prerelease": False,
@@ -39,6 +39,10 @@ def test_setup_asset_is_found_with_digest():
     assert (release.version, release.sha256, release.notes) == ("1.2", SHA, "Neu: Updates")
     assert updater.parse_release(dict(_release_json(), draft=True)) is None
     assert updater.parse_release({"assets": [{"name": "Schalk-v1.2-windows-x64.zip"}]}) is None
+    # A setup offered from anywhere else is ignored
+    for url in ("https://example.org/Schalk-Setup-v1.2.exe", "file:///C:/Schalk-Setup-v1.2.exe",
+                "http://github.com/niklastheiler/Schalk/releases/download/v1.2/Schalk-Setup-v1.2.exe"):
+        assert updater.parse_release(_release_json(browser_download_url=url)) is None
 
 
 def test_only_newer_releases_are_offered(update_dir, monkeypatch):

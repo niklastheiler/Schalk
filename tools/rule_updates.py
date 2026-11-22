@@ -32,7 +32,8 @@ PHIVE = {
 def _get(url: str) -> bytes:
     # Maven Central rejects the default Python user agent (HTTP 429)
     request = urllib.request.Request(url, headers={"User-Agent": "Schalk-rule-update-check"})
-    with urllib.request.urlopen(request, timeout=120) as response:
+    # bandit B310: only the fixed https URLs of this file are opened
+    with urllib.request.urlopen(request, timeout=120) as response:  # nosec B310
         return response.read()
 
 

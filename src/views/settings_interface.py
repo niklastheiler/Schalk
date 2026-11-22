@@ -7,7 +7,8 @@ from datetime import datetime
 from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtGui import QImageReader, QIntValidator, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, Pivot, PrimaryPushButton, PushButton, SubtitleLabel
+from qfluentwidgets import (BodyLabel, CheckBox, ComboBox, LineEdit, MessageBoxBase, Pivot, PrimaryPushButton, PushButton,
+                            SubtitleLabel)
 from stdnum import bic as stdnum_bic, iban as stdnum_iban
 from stdnum.eu import vat as stdnum_vat
 from src.utils.validation import (attach_tax_number_format, contact_problems, german_postal_code_validator,
@@ -45,6 +46,32 @@ BANK_FIELDS = [
     ("bic", "BIC"),
     ("account_holder", "Kontoinhaber"),
 ]
+
+
+ALL_YEARS = "Alle Jahre"
+
+
+class GoBDExportDialog(MessageBoxBase):
+    def __init__(self, years: list, parent=None):
+        super().__init__(parent)
+        self.viewLayout.addWidget(SubtitleLabel("GoBD-Datenexport", self))
+        text = BodyLabel("Für die Betriebsprüfung (Datenträgerüberlassung): alle steuerrelevanten Daten als CSV mit "
+                         "Beschreibung (index.xml) für Prüfsoftware.", self)
+        text.setWordWrap(True)
+        self.viewLayout.addWidget(text)
+        self.yearCombo = ComboBox(self)
+        self.yearCombo.addItems([str(y) for y in years] + [ALL_YEARS])
+        self.viewLayout.addWidget(self.yearCombo)
+        self.documentsCheck = CheckBox("Archivierte Belege mitexportieren (Rechnungs-PDFs, Kassenbelege, Eingangsrechnungen)", self)
+        self.documentsCheck.setChecked(True)
+        self.viewLayout.addWidget(self.documentsCheck)
+        self.yesButton.setText("Exportieren")
+        self.cancelButton.setText("Abbrechen")
+        self.widget.setMinimumWidth(460)
+
+    def year(self):
+        text = self.yearCombo.currentText()
+        return None if text == ALL_YEARS else int(text)
 
 
 class SettingsInterface(QWidget):
@@ -104,7 +131,8 @@ class SettingsInterface(QWidget):
             form.addRow(BodyLabel(label), edit)
             self.edits[key] = edit
         if extra:
-            extra(form, tab)
+            # bandit B610 is a false positive: a local callback, not Django's QuerySet.extra
+            extra(form, tab)  # nosec B610
         layout.addLayout(form)
         layout.addStretch(1)
         return tab
@@ -187,14 +215,28 @@ class SettingsInterface(QWidget):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(36, 12, 36, 36)
         layout.addWidget(SubtitleLabel("GoBD-Integritätsprüfung"))
-        text = BodyLabel("Prüft die Hash-Ketten von Rechnungen und Kassenbuch sowie alle archivierten Dateien "
-                         "(Rechnungs-PDFs, Belege, Eingangsrechnungen) auf Veränderungen.")
+        text = BodyLabel("Prüft die Hash-Ketten von Rechnungen, Kassenbuch und Verlauf, die Lückenlosigkeit der Rechnungs- "
+                         "und Belegnummern, die erfassten Zahlungen sowie alle archivierten Dateien (Rechnungs-PDFs, Belege, "
+                         "Eingangsrechnungen) auf Veränderungen.")
         text.setWordWrap(True)
         layout.addWidget(text)
         buttons = QHBoxLayout()
         self.integrityBtn = PushButton("Integrität prüfen")
         self.integrityBtn.clicked.connect(self.check_integrity)
         buttons.addWidget(self.integrityBtn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        layout.addSpacing(24)
+        layout.addWidget(SubtitleLabel("GoBD-Datenexport (Betriebsprüfung)"))
+        text = BodyLabel("Exportiert Rechnungen, Positionen, Zahlungen, Kassenbuch, Eingangsrechnungen, Kunden und den "
+                         "Verlauf als CSV-Dateien mit Beschreibung nach dem Standard der Finanzverwaltung (index.xml), "
+                         "auf Wunsch mit allen archivierten Belegen.")
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        buttons = QHBoxLayout()
+        self.gobdExportBtn = PushButton("Datenexport erstellen")
+        self.gobdExportBtn.clicked.connect(self.export_gobd)
+        buttons.addWidget(self.gobdExportBtn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         layout.addSpacing(24)
@@ -319,6 +361,31 @@ class SettingsInterface(QWidget):
             show_message(self, "Integritätsprüfung", "Alle Hash-Ketten und archivierten Dateien sind unverändert.")
 
     # --- Backup ---
+    def export_gobd(self):
+        from src.utils.gobd_export import export_gobd
+        c = self.db_controller
+        years = {datetime.now().year}
+        years.update(i.invoice_date.year for i in c.get_invoices() if c.is_finalized(i))
+        years.update(e.entry_date.year for e in c.get_cashbook_entries())
+        years.update(i.date.year for i in c.get_incoming_invoices())
+        dialog = GoBDExportDialog(sorted(years, reverse=True), self.window())
+        if not dialog.exec():
+            return
+        year = dialog.year()
+        name = f"GoBD_Export_{year or 'alle_Jahre'}_{datetime.now():%Y%m%d}.zip"
+        target, _ = QFileDialog.getSaveFileName(self, "GoBD-Datenexport speichern", paths.desktop_path(name), "ZIP (*.zip)")
+        if not target:
+            return
+        try:
+            counts = export_gobd(c, target, year, dialog.documentsCheck.isChecked())
+        except Exception as e:
+            logger.exception("GoBD-Datenexport fehlgeschlagen")
+            notify_error(self, "Export fehlgeschlagen", f"{e}\nDetails: {paths.LOG_PATH}")
+            return
+        summary = ", ".join(f"{name}: {count}" for name, count in counts.items())
+        c.log_actions("Export", [0], f"GoBD-Datenexport ({year or 'alle Jahre'}): {summary}")
+        notify_success(self, "GoBD-Datenexport erstellt", target, duration=5000)
+
     def _backup_folders(self) -> dict:
         return {"app_data": paths.APP_DATA_DIR, "assets": paths.ASSETS_DIR}
 

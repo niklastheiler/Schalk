@@ -136,10 +136,10 @@ class AnalysisInterface(QWidget):
         year = int(self.yearCombo.currentText())
         c = self.db_controller
 
+        # Payments received, by the month they came in (Zufluss); returned payments are negative
         paid = [0.0] * 12
-        for invoice in c.get_invoices():
-            if invoice.status == "Bezahlt" and invoice.invoice_date.year == year:
-                paid[invoice.invoice_date.month - 1] += invoice.gross_amount
+        for payment in c.payments_in_year(year):
+            paid[payment.payment_date.month - 1] += payment.amount
         supplier, other = [0.0] * 12, [0.0] * 12
         for invoice in c.get_incoming_invoices(include_cancelled=False):
             if invoice.date.year == year:
@@ -160,6 +160,6 @@ class AnalysisInterface(QWidget):
             balance.append(running)
 
         self.invoiceCard.setup_chart(
-            {"Kundenrechnungen (Bezahlt)": paid, "Lieferantenrechnungen": supplier, "Sonstige Rechnungen": other},
-            {"Kundenrechnungen (Bezahlt)": "#009688", "Lieferantenrechnungen": "#F44336", "Sonstige Rechnungen": "#FF9800"})
+            {"Zahlungseingänge Kundenrechnungen": paid, "Lieferantenrechnungen": supplier, "Sonstige Rechnungen": other},
+            {"Zahlungseingänge Kundenrechnungen": "#009688", "Lieferantenrechnungen": "#F44336", "Sonstige Rechnungen": "#FF9800"})
         self.cashbookCard.setup_chart({"Kassenbestand": balance}, {"Kassenbestand": "#2196F3"})

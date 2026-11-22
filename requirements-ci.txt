@@ -1,0 +1,5 @@
+# Analysis tools of the CI quality gate (.github/workflows/einvoice-check.yml, job "quality");
+# listed here so Dependabot keeps them current. They are not needed to run or build Schalk.
+pyflakes==4.1.0
+bandit==1.9.4
+pip-audit==2.10.1

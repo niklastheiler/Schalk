@@ -46,7 +46,9 @@ class Customer(Base):
 
 class Invoice(Base):
     __tablename__ = 'invoices'
-    __table_args__ = (Index('ix_invoices_date', 'invoice_date'), Index('ix_invoices_customer', 'customer_id'))
+    __table_args__ = (Index('ix_invoices_date', 'invoice_date'), Index('ix_invoices_customer', 'customer_id'),
+                      # the hash chain is built and checked in this order
+                      Index('ix_invoices_finalized', 'finalized_at', 'id'))
     id = Column(Integer, primary_key=True, autoincrement=True)
     invoice_number = Column(String, unique=True, nullable=False)
     customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
@@ -66,6 +68,8 @@ class Invoice(Base):
     archived_at = Column(DateTime)
     reminder_level = Column(Integer, default=0)
     last_reminder_date = Column(DateTime)
+    # Sum of all payments (table payments); kept with every payment, checked by the integrity check
+    paid_amount = Column(Float)
 
     # GoBD: set once when the invoice is finalized (leaves "Entwurf"); content is immutable afterwards
     finalized_at = Column(DateTime)
@@ -172,6 +176,18 @@ class IncomingInvoice(Base):
     # GoBD: incoming invoices are never deleted, only cancelled
     cancelled_at = Column(DateTime)
 
+class Payment(Base):
+    """A payment received for an invoice. Never changed or deleted; a returned payment is a negative entry."""
+    __tablename__ = 'payments'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    invoice_id = Column(Integer, ForeignKey('invoices.id'), nullable=False, index=True)
+    payment_date = Column(DateTime, nullable=False)
+    amount = Column(Float, nullable=False)
+    note = Column(String)
+    user = Column(String, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+
+
 class DocumentHistory(Base):
     __tablename__ = 'document_history'
     __table_args__ = (Index('ix_history_document', 'document_type', 'document_id'),)
@@ -181,6 +197,8 @@ class DocumentHistory(Base):
     user = Column(String, nullable=False)
     action = Column(String, nullable=False)
     timestamp = Column(DateTime, default=_utcnow)
+    # GoBD: SHA-256 chain over all history entries, so entries removed or changed later are detected
+    hash_chain = Column(String)
 
 
 class WrongPasswordError(Exception):
@@ -364,6 +382,9 @@ class DatabaseManager:
                         column_type = column.type.compile(dialect=self.engine.dialect)
                         conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}')
                         logger.info("Datenbank: Spalte %s.%s ergänzt", table.name, column.name)
+                # Indexes added to a model later (create_all only creates them together with a new table)
+                for index in table.indexes:
+                    index.create(conn, checkfirst=True)
 
     def save(self):
         """Persists the current state; encryption and disk I/O run in the background."""
@@ -398,11 +419,17 @@ class DatabaseManager:
         check = sqlite3.connect(':memory:')
         try:
             check.deserialize(plaintext)
-            check.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            # A damaged database file (inner pages) passes the first query; integrity_check reads every page
+            healthy = check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            tables = {row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         except sqlite3.DatabaseError:
             raise ValueError("Das Backup enthält keine gültige Datenbank.")
         finally:
             check.close()
+        if not healthy:
+            raise ValueError("Die Datenbank im Backup ist beschädigt.")
+        if not {"invoices", "settings", "document_history"} <= tables:
+            raise ValueError("Das Backup enthält keine Schalk-Datenbank.")
 
         # No further background writes may overwrite the restored file
         self._writer.close()

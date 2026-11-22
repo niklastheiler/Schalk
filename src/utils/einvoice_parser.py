@@ -11,7 +11,12 @@ from typing import List, Optional
 from lxml import etree
 
 # XXE protection: never resolve entities or load external resources from received files
-_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False)
+_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False, load_dtd=False, dtd_validation=False)
+# Received files are read into memory; real invoices are far smaller (a PDF with attachments a few MB)
+MAX_FILE_SIZE = 50 * 1024 * 1024
+# Profiles below EN 16931 are no e-invoices in the sense of § 14 UStG (BMF letters of 15.10.2024 and 15.10.2025)
+_NOT_AN_EINVOICE = {"urn:factur-x.eu:1p0:minimum": "MINIMUM", "urn:factur-x.eu:1p0:basicwl": "BASIC WL",
+                    "urn:zugferd.de:2p0:minimum": "MINIMUM", "urn:zugferd.de:2p0:basicwl": "BASIC WL"}
 
 
 @dataclass
@@ -45,6 +50,14 @@ class EInvoiceData:
     payment_terms: str = ""
     notes: List[str] = field(default_factory=list)
     lines: List[EInvoiceLine] = field(default_factory=list)
+    syntax: str = "" # "CII" or "UBL"
+    guideline: str = "" # specification identifier (BT-24)
+    xml: bytes = field(default=b"", repr=False)
+
+    @property
+    def below_en16931(self) -> str:
+        """Name of a Factur-X profile that is no e-invoice under § 14 UStG, otherwise ''."""
+        return _NOT_AN_EINVOICE.get(self.guideline.strip().lower(), "")
 
     @property
     def is_credit_note(self) -> bool:
@@ -104,6 +117,8 @@ def _parse_cii(root, source_is_pdf: bool) -> EInvoiceData:
 
     data = EInvoiceData(
         format=fmt,
+        syntax="CII",
+        guideline=guideline,
         type_code=_first(root, doc + _ln("TypeCode")),
         number=_first(root, doc + _ln("ID")),
         issue_date=_parse_cii_date(_first(root, doc + _ln("IssueDateTime", "DateTimeString"))),
@@ -145,6 +160,8 @@ def _parse_ubl(root) -> EInvoiceData:
     address = supplier + _ln("PostalAddress")
     data = EInvoiceData(
         format=fmt,
+        syntax="UBL",
+        guideline=customization,
         type_code=_first(root, "." + _ln("CreditNoteTypeCode" if is_credit else "InvoiceTypeCode")) or ("381" if is_credit else "380"),
         number=_first(root, "." + _ln("ID")),
         issue_date=_parse_iso_date(_first(root, "." + _ln("IssueDate"))),
@@ -184,16 +201,24 @@ def parse_einvoice_xml(xml: bytes, source_is_pdf: bool = False) -> Optional[EInv
         root = etree.fromstring(xml, _PARSER)
     except etree.XMLSyntaxError:
         return None
+    # E-invoices never have a document type declaration; one is only good for entity tricks (XXE, entity expansion)
+    if root.getroottree().docinfo.doctype:
+        return None
     name = etree.QName(root).localname
     if name == "CrossIndustryInvoice":
-        return _parse_cii(root, source_is_pdf)
-    if name in ("Invoice", "CreditNote"):
-        return _parse_ubl(root)
-    return None
+        data = _parse_cii(root, source_is_pdf)
+    elif name in ("Invoice", "CreditNote"):
+        data = _parse_ubl(root)
+    else:
+        return None
+    data.xml = xml
+    return data
 
 
 def extract_xml(path: str) -> Optional[bytes]:
     """The structured invoice data of a file: the XML itself or the XML embedded in a ZUGFeRD PDF."""
+    if os.path.getsize(path) > MAX_FILE_SIZE:
+        raise ValueError(f"Die Datei ist größer als {MAX_FILE_SIZE // (1024 * 1024)} MB und wird nicht eingelesen.")
     with open(path, "rb") as f:
         content = f.read()
     if path.lower().endswith(".xml"):

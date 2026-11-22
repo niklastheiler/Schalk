@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 REPOSITORY = "niklastheiler/Schalk"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+# Setups are only downloaded from this repository's releases (never from a URL of another host or scheme)
+DOWNLOAD_PREFIX = f"https://github.com/{REPOSITORY}/releases/download/"
 SETUP_PATTERN = re.compile(r"Schalk-Setup-v(?P<version>[\d.]+)\.exe")
 SETUP_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS"
 UPDATE_DIR = os.path.join(paths.DATA_DIR, "updates")
@@ -66,8 +68,11 @@ def is_installed() -> bool:
 
 
 def _request(url: str, accept: str = "application/vnd.github+json"):
+    if not url.startswith(("https://api.github.com/", DOWNLOAD_PREFIX)):
+        raise ValueError(f"Unerwartete Update-Adresse: {url}")
     request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": f"Schalk/{APP_VERSION}"})
-    return urllib.request.urlopen(request, timeout=TIMEOUT)
+    # bandit B310: only the https URLs checked above are opened
+    return urllib.request.urlopen(request, timeout=TIMEOUT)  # nosec B310
 
 
 def parse_release(data: dict) -> Optional[Release]:
@@ -76,7 +81,7 @@ def parse_release(data: dict) -> Optional[Release]:
         return None
     for asset in data.get("assets", []):
         match = SETUP_PATTERN.fullmatch(asset.get("name", ""))
-        if match:
+        if match and str(asset.get("browser_download_url", "")).startswith(DOWNLOAD_PREFIX):
             digest = asset.get("digest") or ""
             return Release(
                 version=match.group("version"),

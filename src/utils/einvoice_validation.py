@@ -59,6 +59,26 @@ def validate_en16931(xml: bytes) -> List[str]:
     return _run_schematron(_FACTURX_XSLT, xml)
 
 
+def check_received(data) -> List[str]:
+    """
+    Checks a received e-invoice (EInvoiceData of einvoice_parser) and returns German notes for the user; empty =
+    no objections. CII invoices (XRechnung, ZUGFeRD) are checked with the official CEN EN 16931 rules, an
+    XRechnung also with the KoSIT rules. For UBL the rule set is not part of Schalk, which is said in the note.
+    """
+    notes = []
+    if data.below_en16931:
+        notes.append(f"Profil {data.below_en16931}: Das ist keine E-Rechnung im Sinne des § 14 UStG. Beim Lieferanten "
+                     "eine Rechnung im Profil EN 16931 (oder XRechnung) anfordern.")
+    if data.syntax == "CII" and not data.below_en16931:
+        problems = _run_schematron(_CEN_XSLT, data.xml)
+        if "xrechnung" in data.guideline.lower():
+            problems += _run_schematron(_XRECHNUNG_XSLT, data.xml)
+        notes += [f"Regelverstoß: {p}" for p in problems]
+    elif data.syntax == "UBL":
+        notes.append("UBL-Rechnungen werden gelesen, aber nicht gegen die EN-16931-Regeln geprüft.")
+    return notes
+
+
 def validate_xrechnung(xml: bytes) -> List[str]:
     """XRechnung (CII) with the rule sets of the official KoSIT validator."""
     return _run_schematron(_CEN_XSLT, xml) + _run_schematron(_XRECHNUNG_XSLT, xml)

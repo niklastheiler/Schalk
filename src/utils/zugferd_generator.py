@@ -12,7 +12,7 @@ from drafthorse.models.accounting import ApplicableTradeTax, CategoryTradeTax, T
 from drafthorse.models.party import TaxRegistration
 from drafthorse.models.payment import PaymentMeans, PaymentTerms
 from drafthorse.models.tradelines import AllowanceCharge, LineItem
-from src.utils.calculations import tax_breakdown, round_money
+from src.utils.calculations import CENT, tax_breakdown, round_money
 from src.utils.text import payment_terms_text
 from src.utils.tax import vat_category
 
@@ -43,7 +43,8 @@ def country_code(code) -> str:
 
 
 def _dec(value) -> Decimal:
-    return Decimal(str(round_money(value)))
+    """Amount with exactly two decimals (19.00 instead of 19.0), as every receiving system expects it."""
+    return Decimal(str(round_money(value))).quantize(CENT)
 
 
 def _date(value):
