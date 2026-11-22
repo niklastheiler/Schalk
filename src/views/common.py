@@ -128,32 +128,37 @@ def open_document(parent, path: str, print_document: bool = False) -> bool:
 
 
 # --- Unsaved changes ---
-def form_state(widgets) -> tuple:
+def form_state(widgets) -> dict:
     """
-    Values of all input fields among widgets and their children: text fields, check boxes, drop-downs and date
-    pickers. Two states compare equal when nothing was typed or chosen in between.
+    Values of all input fields among widgets and their children (text fields, check boxes, drop-downs, date
+    pickers), keyed by the field itself. Two states compare equal when nothing was typed or chosen in between.
+    Keyed instead of listed in order: clicking a field can move it within its parent's children (raise()), which
+    changed the order of a list and made untouched forms look changed now and then.
     """
     from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QLineEdit, QPlainTextEdit, QRadioButton, QTextEdit
     from qfluentwidgets import DatePicker
     import shiboken6
-    values = []
+    values = {}
     for root in widgets:
         for widget in [root] + root.findChildren(QWidget):
             if not shiboken6.isValid(widget):
                 continue
             if isinstance(widget, QLineEdit):
-                values.append(widget.text())
+                value = widget.text()
             elif isinstance(widget, (QCheckBox, QRadioButton)):
-                values.append(widget.isChecked())
+                value = widget.isChecked()
             elif isinstance(widget, DatePicker):
-                values.append(widget.date.toString(Qt.ISODate))
+                value = widget.date.toString(Qt.ISODate)
             elif isinstance(widget, ComboBox):
-                values.append(widget.currentText())
+                value = widget.currentText()
             elif isinstance(widget, QAbstractSpinBox):
-                values.append(widget.text())
+                value = widget.text()
             elif isinstance(widget, (QTextEdit, QPlainTextEdit)):
-                values.append(widget.toPlainText())
-    return tuple(values)
+                value = widget.toPlainText()
+            else:
+                continue
+            values[shiboken6.getCppPointer(widget)[0]] = value
+    return values
 
 
 class UnsavedChanges:
@@ -172,7 +177,7 @@ class UnsavedChanges:
         return ()
 
     def _current_state(self) -> tuple:
-        return form_state(self.unsaved_fields()) + tuple(self.extra_state())
+        return form_state(self.unsaved_fields()), tuple(self.extra_state())
 
     def mark_clean(self):
         self._clean_state = self._current_state()
