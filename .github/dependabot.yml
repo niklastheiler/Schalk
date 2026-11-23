@@ -1,6 +1,6 @@
 # Weekly dependency updates. Every update PR runs the tests and the e-invoice validation (einvoice-check.yml).
-# The validation rules and the Mustang validator are not covered here; see rules-update-check.yml.
-# Green update PRs are merged and released automatically: see dependabot-auto-merge.yml.
+# The validation rules and the Mustang validator are not covered here; see weekly-updates.yml.
+# Green update PRs are merged and released automatically: see weekly-updates.yml.
 version: 2
 updates:
   - package-ecosystem: pip

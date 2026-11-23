@@ -1,5 +1,5 @@
 # Publishes a new automatic release after a pull request was merged (validation rules, Dependabot updates).
-# Called by rules-update-check.yml and dependabot-auto-merge.yml. Counts the fourth version number
+# Called by weekly-updates.yml. Counts the fourth version number
 # (1.4.5 -> 1.4.5.1 -> 1.4.5.2), writes the changelog entry to main and starts the Release workflow, which runs
 # the whole check again, builds and tests the EXE and the installer and only then publishes.
 name: Automatisches Release
@@ -8,7 +8,7 @@ on:
   workflow_call:
     inputs:
       note:
-        description: Changelog entry of the new version
+        description: Changelog entries of the new version, one per line
         type: string
         required: true
 
@@ -40,7 +40,8 @@ jobs:
       - name: Version hochzählen
         id: bump
         run: |
-          python tools/bump_version.py --auto "$NOTE" | tee bump.txt
+          mapfile -t notes < <(printf '%s\n' "$NOTE" | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//')
+          python tools/bump_version.py --auto "${notes[@]}" | tee bump.txt
           echo "version=$(python -c "import re; print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('src/version.py').read()).group(1))")" >> "$GITHUB_OUTPUT"
 
       - name: Version nach main schreiben
