@@ -55,7 +55,7 @@ jobs:
         run: |
           versions=$(python -c "import json; r=json.load(open('src/resources/rules.json')); print(f\"EN16931 {r['en16931']}, XRechnung {r['xrechnung']}, Mustang {r['mustang']}\")")
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
-          branch="rules-update/$(date -u +%Y%m%d)"
+          branch="rules-update/$(date -u +%Y%m%d-%H%M)"
           title="Prüfregeln aktualisiert: $versions"
           if [ -n "$(gh pr list --state open --search "Prüfregeln aktualisiert in:title" --json number --jq '.[].number')" ]; then
             echo "Ein Update-Pull-Request ist schon offen."
@@ -128,6 +128,7 @@ jobs:
       notes: ${{ steps.merge.outputs.notes }}
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }} # no checkout in this job, so gh cannot find the repository by itself
     steps:
       - name: Dependabot-Pull-Requests mergen, deren Prüfung grün ist
         id: merge
