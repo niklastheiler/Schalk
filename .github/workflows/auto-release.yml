@@ -1,0 +1,72 @@
+# Publishes a new automatic release after a pull request was merged (validation rules, Dependabot updates).
+# Called by rules-update-check.yml and dependabot-auto-merge.yml. Counts the fourth version number
+# (1.4.5 -> 1.4.5.1 -> 1.4.5.2), writes the changelog entry to main and starts the Release workflow, which runs
+# the whole check again, builds and tests the EXE and the installer and only then publishes.
+name: Automatisches Release
+
+on:
+  workflow_call:
+    inputs:
+      note:
+        description: Changelog entry of the new version
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+# One release at a time; later ones wait and count on from the version of the earlier one
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NOTE: ${{ inputs.note }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Version hochzählen
+        id: bump
+        run: |
+          python tools/bump_version.py --auto "$NOTE" | tee bump.txt
+          echo "version=$(python -c "import re; print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('src/version.py').read()).group(1))")" >> "$GITHUB_OUTPUT"
+
+      - name: Version nach main schreiben
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Version ${{ steps.bump.outputs.version }}"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          echo "Die Version konnte nicht nach main geschrieben werden (ist main geschützt?)"
+          exit 1
+
+      - name: Release starten und abwarten
+        run: |
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release.yml --ref main
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh run list --workflow release.yml --event workflow_dispatch --branch main --limit 5 --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$started\")] | last | .databaseId // empty")
+            [ -n "$run_id" ] && break
+          done
+          [ -n "$run_id" ] || { echo "Release-Lauf wurde nicht gestartet"; exit 1; }
+          echo "Release-Lauf: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          gh run watch "$run_id" --exit-status --interval 60
+          gh release view "v${{ steps.bump.outputs.version }}" --json tagName,url --jq '.url'

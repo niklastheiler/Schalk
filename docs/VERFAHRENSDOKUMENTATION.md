@@ -103,3 +103,9 @@ Lint, statische Sicherheitsanalyse, Prüfung der Abhängigkeiten auf bekannte Si
 unabhängige Validierung der E-Rechnungen aller Steuerfälle (Mustang inklusive veraPDF). Ein Release wird nur
 veröffentlicht, wenn alles besteht, die EXE den Selbsttest besteht und sich das Setup installieren und deinstallieren lässt.
 Die Änderungen jeder Version stehen in `CHANGELOG.md`, der Prüfbericht in `docs/AUDIT.md`.
+
+Automatische Updates: Ein wöchentlicher Workflow aktualisiert die Prüfregeln für E-Rechnungen (EN 16931, XRechnung) und den
+Mustang-Validator; Dependabot aktualisiert die Abhängigkeiten. Beide Änderungen werden nur übernommen, wenn die vollständige
+Prüfung auf dem Änderungszweig grün ist. Danach erscheint automatisch ein Release, dessen vierte Versionsnummer hochgezählt
+wird (z. B. 1.4.5.1); auch dieses durchläuft die Prüfung, den Selbsttest der EXE und den Installationstest. Änderungen am
+Funktionsumfang bleiben manuelle Releases (1.5, 1.4.6).

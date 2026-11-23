@@ -1,5 +1,11 @@
-# Weekly check for new versions of the official validation rules (CEN EN 16931, KoSIT XRechnung)
-# and the Mustang validator; opens an issue with the update steps when one is available.
+# Weekly update of the official validation rules (CEN EN 16931, KoSIT XRechnung) and the Mustang validator.
+# If newer versions exist, the workflow updates src/resources/rules.json and the rule files on a branch, runs the
+# complete check (tests, quality, Mustang validation of all tax cases) on that branch and merges it only if
+# everything is green. After the merge a new release (fourth version number) is published by auto-release.yml.
+#
+# Repository settings this needs (Settings -> Actions -> General): "Allow GitHub Actions to create and approve
+# pull requests". If main is protected by a ruleset that demands reviews, the final merge step fails and the
+# pull request stays open for a manual merge.
 name: Prüfregeln aktuell?
 
 on:
@@ -8,12 +14,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  issues: write
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: rules-update
+  cancel-in-progress: false
 
 jobs:
-  check:
+  update:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+      versions: ${{ steps.pr.outputs.versions }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
 
@@ -21,34 +38,90 @@ jobs:
         with:
           python-version: "3.15"
 
-      - name: Neue Versionen suchen
-        id: check
+      - name: Neue Versionen suchen und einspielen
+        id: update
         run: |
           set +e
-          python tools/rule_updates.py | tee report.txt
+          python tools/rule_updates.py --update | tee report.txt
           rc=${PIPESTATUS[0]}
+          # 0: up to date, 10: outdated and updated, anything else: the check itself failed
           if [ "$rc" -eq 10 ]; then echo "outdated=true" >> "$GITHUB_OUTPUT"; elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-      - name: Issue anlegen
-        if: steps.check.outputs.outdated == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Zweig und Pull Request anlegen
+        id: pr
+        if: steps.update.outputs.outdated == 'true'
         run: |
-          title="Neue Version der E-Rechnungs-Prüfregeln verfügbar"
-          if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
-            echo "Issue ist bereits offen."
+          versions=$(python -c "import json; r=json.load(open('src/resources/rules.json')); print(f\"EN16931 {r['en16931']}, XRechnung {r['xrechnung']}, Mustang {r['mustang']}\")")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          branch="rules-update/$(date -u +%Y%m%d)"
+          title="Prüfregeln aktualisiert: $versions"
+          if [ -n "$(gh pr list --state open --search "Prüfregeln aktualisiert in:title" --json number --jq '.[].number')" ]; then
+            echo "Ein Update-Pull-Request ist schon offen."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A src/resources
+          git commit -m "$title"
+          git push origin "$branch"
           {
-            echo "Der wöchentliche Check hat neuere Versionen gefunden:"
+            echo "Der wöchentliche Check hat neuere Versionen gefunden und eingespielt:"
             echo
             echo '```'
             cat report.txt
             echo '```'
             echo
-            echo "**Aktualisieren:**"
-            echo "1. \`python tools/rule_updates.py --update\` ausführen (ersetzt die Regelwerke unter \`src/resources\` und \`rules.json\`)."
-            echo "2. Bei neuer Mustang-Version: Version und SHA-1 in \`.github/workflows/einvoice-check.yml\` und \`src/resources/rules.json\` anpassen."
-            echo "3. PR öffnen: Die E-Rechnungs-Prüfung zeigt, ob alle Steuerfälle die neuen Regeln bestehen."
+            echo "Der Pull Request wird nur gemergt, wenn die E-Rechnungs-Prüfung (Tests, Qualität, Mustang-Validierung aller Steuerfälle) auf diesem Zweig grün ist. Nach dem Merge wird automatisch ein neues Release veröffentlicht."
           } > body.md
-          gh issue create --title "$title" --body-file body.md
+          gh pr create --base main --head "$branch" --title "$title" --body-file body.md
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      # Pushes made with the workflow token do not start the pull_request workflows,
+      # so the check is dispatched explicitly on the branch (its check runs appear on the pull request).
+      - name: E-Rechnungs-Prüfung auf dem Zweig starten und abwarten
+        id: ci
+        if: steps.update.outputs.outdated == 'true' && steps.pr.outputs.skip != 'true'
+        run: |
+          branch="${{ steps.pr.outputs.branch }}"
+          gh workflow run einvoice-check.yml --ref "$branch"
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh run list --workflow einvoice-check.yml --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run_id" ] && break
+          done
+          [ -n "$run_id" ] || { echo "Prüflauf wurde nicht gestartet"; exit 1; }
+          echo "Prüflauf: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          gh run watch "$run_id" --exit-status --interval 30
+
+      - name: Pull Request mergen
+        id: merge
+        if: steps.update.outputs.outdated == 'true' && steps.pr.outputs.skip != 'true'
+        run: |
+          branch="${{ steps.pr.outputs.branch }}"
+          # --auto waits for required checks if the repository demands them; without any requirement
+          # GitHub refuses it, then the green check above is the gate and the pull request is merged directly
+          gh pr merge "$branch" --squash --delete-branch --auto || gh pr merge "$branch" --squash --delete-branch
+          for _ in $(seq 1 60); do
+            [ "$(gh pr view "$branch" --json state --jq .state)" = "MERGED" ] && { echo "merged=true" >> "$GITHUB_OUTPUT"; exit 0; }
+            sleep 30
+          done
+          echo "Der Pull Request wurde nicht gemergt; es gibt kein Release."
+          exit 1
+
+      - name: Bei Fehlschlag Hinweis am Pull Request hinterlassen
+        if: failure() && steps.pr.outputs.branch != ''
+        run: |
+          gh pr comment "${{ steps.pr.outputs.branch }}" --body "Die E-Rechnungs-Prüfung ist mit den neuen Regeln fehlgeschlagen (oder der Merge war nicht möglich). Der Pull Request bleibt offen, siehe Lauf $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Die neuen Regeln müssen geprüft werden, bevor sie übernommen werden."
+
+  release:
+    needs: update
+    if: needs.update.outputs.merged == 'true'
+    uses: ./.github/workflows/auto-release.yml
+    with:
+      note: "Prüfregeln für E-Rechnungen aktualisiert (${{ needs.update.outputs.versions }})"
+    permissions:
+      contents: write
+      actions: write

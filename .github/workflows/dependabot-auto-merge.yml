@@ -1,0 +1,65 @@
+# Merges Dependabot pull requests as soon as the check (E-Rechnung prüfen: lint, security scan, tests, Mustang
+# validation) is green, and publishes a new release for updates of the program's dependencies (auto-release.yml).
+# Updates of GitHub Actions only touch the build and need no release.
+# Runs in the context of the main branch (workflow_run) and never runs code of the pull request.
+name: Dependabot automatisch mergen
+
+on:
+  workflow_run:
+    workflows: ["E-Rechnung prüfen"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+      release: ${{ steps.merge.outputs.release }}
+      title: ${{ steps.merge.outputs.title }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Pull Request mergen
+        id: merge
+        run: |
+          pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,author,headRefOid --jq '.[0] // empty')
+          [ -n "$pr" ] || { echo "Kein offener Pull Request für $BRANCH"; exit 0; }
+          number=$(echo "$pr" | jq -r .number)
+          [ "$(echo "$pr" | jq -r .author.login)" = "app/dependabot" ] || [ "$(echo "$pr" | jq -r .author.login)" = "dependabot[bot]" ] \
+            || { echo "Pull Request ist nicht von Dependabot"; exit 0; }
+          # The green check must belong to the current state of the pull request
+          [ "$(echo "$pr" | jq -r .headRefOid)" = "$SHA" ] || { echo "Der Pull Request hat sich seit der Prüfung geändert"; exit 0; }
+          title=$(gh pr view "$number" --repo "$REPO" --json title --jq .title)
+          gh pr merge "$number" --repo "$REPO" --squash --delete-branch --auto || gh pr merge "$number" --repo "$REPO" --squash --delete-branch
+          for _ in $(seq 1 30); do
+            [ "$(gh pr view "$number" --repo "$REPO" --json state --jq .state)" = "MERGED" ] && merged=true && break
+            sleep 30
+          done
+          [ "${merged:-}" = "true" ] || { echo "Der Pull Request wurde nicht gemergt"; exit 1; }
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+          # Only updates of the program's dependencies change the software, not those of the GitHub Actions
+          case "$BRANCH" in dependabot/github_actions/*) ;; *) echo "release=true" >> "$GITHUB_OUTPUT" ;; esac
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: merge
+    if: needs.merge.outputs.merged == 'true' && needs.merge.outputs.release == 'true'
+    uses: ./.github/workflows/auto-release.yml
+    with:
+      note: "Abhängigkeiten aktualisiert (Dependabot): ${{ needs.merge.outputs.title }}"
+    permissions:
+      contents: write
+      actions: write

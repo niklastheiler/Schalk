@@ -2,5 +2,6 @@
   "phive_rules": "4.6.3",
   "en16931": "1.3.16",
   "xrechnung": "3.0.2",
-  "mustang": "2.26.0"
+  "mustang": "2.26.0",
+  "mustang_sha1": "8755fc333032f802ad7dcf3930201edfe64014e2"
 }

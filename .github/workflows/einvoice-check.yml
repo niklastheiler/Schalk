@@ -16,10 +16,6 @@ on:
 permissions:
   contents: read
 
-env:
-  MUSTANG_VERSION: "2.26.0"
-  MUSTANG_SHA1: "8755fc333032f802ad7dcf3930201edfe64014e2"
-
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -80,10 +76,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://repo1.maven.org/maven2/org/mustangproject/Mustang-CLI/$env:MUSTANG_VERSION/Mustang-CLI-$env:MUSTANG_VERSION.jar"
+          # Version and SHA-1 are recorded in src/resources/rules.json (updated by the rules-update workflow)
+          $rules = Get-Content src/resources/rules.json -Raw | ConvertFrom-Json
+          $url = "https://repo1.maven.org/maven2/org/mustangproject/Mustang-CLI/$($rules.mustang)/Mustang-CLI-$($rules.mustang).jar"
           Invoke-WebRequest $url -OutFile mustang.jar
           $hash = (Get-FileHash mustang.jar -Algorithm SHA1).Hash.ToLower()
-          if ($hash -ne $env:MUSTANG_SHA1) { throw "Prüfsumme des Mustang-Validators stimmt nicht: $hash" }
+          if ($hash -ne $rules.mustang_sha1) { throw "Prüfsumme des Mustang-Validators stimmt nicht: $hash" }
 
       - name: Rechnungen validieren
         shell: pwsh
