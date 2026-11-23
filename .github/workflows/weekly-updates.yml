@@ -105,7 +105,7 @@ jobs:
           branch="${{ steps.pr.outputs.branch }}"
           # --auto waits for required checks if the repository demands them; without any requirement
           # GitHub refuses it, then the green check above is the gate and the pull request is merged directly
-          gh pr merge "$branch" --squash --delete-branch --auto || gh pr merge "$branch" --squash --delete-branch
+          gh pr merge "$branch" --merge --delete-branch --auto || gh pr merge "$branch" --merge --delete-branch
           for _ in $(seq 1 60); do
             [ "$(gh pr view "$branch" --json state --jq .state)" = "MERGED" ] && { echo "merged=true" >> "$GITHUB_OUTPUT"; exit 0; }
             sleep 30
@@ -146,7 +146,7 @@ jobs:
               echo "#$number ($title): Prüfung nicht grün (Ergebnis: ${result:-offen}); bleibt offen"
               continue
             fi
-            if gh pr merge "$number" --squash --delete-branch; then
+            if gh pr merge "$number" --merge --delete-branch; then
               echo "#$number ($title): gemergt"
               merged=true
               case "$branch" in
