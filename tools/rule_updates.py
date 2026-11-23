@@ -4,8 +4,8 @@ Checks Maven Central for newer versions of the e-invoice validation rules and th
     python tools/rule_updates.py            report; exit code 10 if anything is outdated
     python tools/rule_updates.py --update   additionally replace the rule files in src/resources
 
-The versions in use are recorded in src/resources/rules.json. The Mustang version used by the
-check workflow is updated by hand in .github/workflows/einvoice-check.yml (version and SHA-1).
+The versions in use (including the Mustang version and its SHA-1, which the check workflow reads) are
+recorded in src/resources/rules.json.
 """
 import io
 import json
@@ -64,6 +64,10 @@ def main(update: bool) -> int:
     for name, (artifact, pattern, target) in PHIVE.items():
         latest[name], files[target] = newest_rules(artifact, latest["phive_rules"], pattern)
     latest["mustang"] = latest_release("org.mustangproject", "Mustang-CLI")
+    mustang_sha1 = None
+    if latest["mustang"] != current["mustang"]:
+        mustang_sha1 = _get(f"{MAVEN}/org/mustangproject/Mustang-CLI/{latest['mustang']}/"
+                            f"Mustang-CLI-{latest['mustang']}.jar.sha1").decode().split()[0].lower()
 
     outdated = [key for key in ("en16931", "xrechnung", "mustang") if latest[key] != current[key]]
     for key in ("en16931", "xrechnung", "mustang"):
@@ -75,12 +79,13 @@ def main(update: bool) -> int:
         for target, data in files.items():
             with open(os.path.join(RESOURCES, target), "wb") as f:
                 f.write(data)
-        current.update({key: latest[key] for key in ("phive_rules", "en16931", "xrechnung")})
+        current.update({key: latest[key] for key in ("phive_rules", "en16931", "xrechnung", "mustang")})
+        if mustang_sha1:
+            current["mustang_sha1"] = mustang_sha1
         with open(RULES_FILE, "w", encoding="utf-8") as f:
             json.dump(current, f, indent=2)
             f.write("\n")
-        print("Regelwerke aktualisiert. Danach die Tests laufen lassen"
-              + ("; Mustang-Version und SHA-1 in .github/workflows/einvoice-check.yml von Hand anpassen." if "mustang" in outdated else "."))
+        print("Regelwerke aktualisiert. Danach die Tests und die E-Rechnungs-Prüfung laufen lassen.")
     return OUTDATED
 
 

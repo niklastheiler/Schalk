@@ -10,7 +10,7 @@ def test_rule_files_and_versions_are_consistent():
         rules = json.load(f)
     for path in (("en16931", "EN16931-CII-validation.xslt"), ("xrechnung", "XRechnung-CII-validation.xslt")):
         assert os.path.isfile(os.path.join(ROOT, "src", "resources", *path))
-    # The check workflow downloads the Mustang version recorded in rules.json
+    # The check workflow reads the Mustang version and its SHA-1 from rules.json
+    assert re.fullmatch(r"[0-9a-f]{40}", rules["mustang_sha1"])
     with open(os.path.join(ROOT, ".github", "workflows", "einvoice-check.yml"), encoding="utf-8") as f:
-        workflow = f.read()
-    assert re.search(r'MUSTANG_VERSION: "([^"]+)"', workflow).group(1) == rules["mustang"]
+        assert "MUSTANG_VERSION" not in f.read()

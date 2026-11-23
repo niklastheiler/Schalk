@@ -1,0 +1,172 @@
+# Weekly updates, merged and released together (at most one release per run):
+# 1. rules: newer validation rules (CEN EN 16931, KoSIT XRechnung) and Mustang validator are put on a branch, the
+#    complete check (tests, quality, Mustang validation of all tax cases) runs on that branch, merge only if green
+# 2. dependabot: open Dependabot pull requests whose check is green are merged
+# 3. release: if something that changes the software was merged, auto-release.yml publishes ONE new release
+#    (fourth version number). Updates of GitHub Actions only touch the build and need no release.
+#
+# Repository settings this needs (Settings -> Actions -> General): "Allow GitHub Actions to create and approve
+# pull requests". If main is protected by a ruleset that demands reviews, the merge steps fail and the pull
+# requests stay open for a manual merge.
+name: Wöchentliche Updates
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: rules-update
+  cancel-in-progress: false
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+      versions: ${{ steps.pr.outputs.versions }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Neue Versionen suchen und einspielen
+        id: update
+        run: |
+          set +e
+          python tools/rule_updates.py --update | tee report.txt
+          rc=${PIPESTATUS[0]}
+          # 0: up to date, 10: outdated and updated, anything else: the check itself failed
+          if [ "$rc" -eq 10 ]; then echo "outdated=true" >> "$GITHUB_OUTPUT"; elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Zweig und Pull Request anlegen
+        id: pr
+        if: steps.update.outputs.outdated == 'true'
+        run: |
+          versions=$(python -c "import json; r=json.load(open('src/resources/rules.json')); print(f\"EN16931 {r['en16931']}, XRechnung {r['xrechnung']}, Mustang {r['mustang']}\")")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          branch="rules-update/$(date -u +%Y%m%d)"
+          title="Prüfregeln aktualisiert: $versions"
+          if [ -n "$(gh pr list --state open --search "Prüfregeln aktualisiert in:title" --json number --jq '.[].number')" ]; then
+            echo "Ein Update-Pull-Request ist schon offen."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A src/resources
+          git commit -m "$title"
+          git push origin "$branch"
+          {
+            echo "Der wöchentliche Check hat neuere Versionen gefunden und eingespielt:"
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+            echo
+            echo "Der Pull Request wird nur gemergt, wenn die E-Rechnungs-Prüfung (Tests, Qualität, Mustang-Validierung aller Steuerfälle) auf diesem Zweig grün ist. Nach dem Merge wird automatisch ein neues Release veröffentlicht, gemeinsam mit den übrigen Updates dieser Woche."
+          } > body.md
+          gh pr create --base main --head "$branch" --title "$title" --body-file body.md
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      # Pushes made with the workflow token do not start the pull_request workflows,
+      # so the check is dispatched explicitly on the branch (its check runs appear on the pull request).
+      - name: E-Rechnungs-Prüfung auf dem Zweig starten und abwarten
+        id: ci
+        if: steps.update.outputs.outdated == 'true' && steps.pr.outputs.skip != 'true'
+        run: |
+          branch="${{ steps.pr.outputs.branch }}"
+          gh workflow run einvoice-check.yml --ref "$branch"
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh run list --workflow einvoice-check.yml --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run_id" ] && break
+          done
+          [ -n "$run_id" ] || { echo "Prüflauf wurde nicht gestartet"; exit 1; }
+          echo "Prüflauf: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          gh run watch "$run_id" --exit-status --interval 30
+
+      - name: Pull Request mergen
+        id: merge
+        if: steps.update.outputs.outdated == 'true' && steps.pr.outputs.skip != 'true'
+        run: |
+          branch="${{ steps.pr.outputs.branch }}"
+          # --auto waits for required checks if the repository demands them; without any requirement
+          # GitHub refuses it, then the green check above is the gate and the pull request is merged directly
+          gh pr merge "$branch" --squash --delete-branch --auto || gh pr merge "$branch" --squash --delete-branch
+          for _ in $(seq 1 60); do
+            [ "$(gh pr view "$branch" --json state --jq .state)" = "MERGED" ] && { echo "merged=true" >> "$GITHUB_OUTPUT"; exit 0; }
+            sleep 30
+          done
+          echo "Der Pull Request wurde nicht gemergt; es gibt kein Release."
+          exit 1
+
+      - name: Bei Fehlschlag Hinweis am Pull Request hinterlassen
+        if: failure() && steps.pr.outputs.branch != ''
+        run: |
+          gh pr comment "${{ steps.pr.outputs.branch }}" --body "Die E-Rechnungs-Prüfung ist mit den neuen Regeln fehlgeschlagen (oder der Merge war nicht möglich). Der Pull Request bleibt offen, siehe Lauf $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Die neuen Regeln müssen geprüft werden, bevor sie übernommen werden."
+
+  dependabot:
+    needs: rules
+    if: always() # the rules job failing (red check) must not hold back the dependency updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+      notes: ${{ steps.merge.outputs.notes }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Dependabot-Pull-Requests mergen, deren Prüfung grün ist
+        id: merge
+        run: |
+          merged=false
+          notes=""
+          gh pr list --state open --json number,title,headRefName,headRefOid,author \
+            --jq '.[] | select(.author.login | test("dependabot")) | [.number, .headRefName, .headRefOid, .title] | @tsv' > prs.tsv
+          while IFS=$'\t' read -r number branch sha title; do
+            [ -n "$number" ] || continue
+            # The green check must belong to the current state of the pull request
+            result=$(gh run list --workflow einvoice-check.yml --branch "$branch" --event pull_request --limit 10 \
+              --json headSha,conclusion --jq "[.[] | select(.headSha == \"$sha\")] | first | .conclusion // empty")
+            if [ "$result" != "success" ]; then
+              echo "#$number ($title): Prüfung nicht grün (Ergebnis: ${result:-offen}); bleibt offen"
+              continue
+            fi
+            if gh pr merge "$number" --squash --delete-branch; then
+              echo "#$number ($title): gemergt"
+              merged=true
+              case "$branch" in
+                dependabot/github_actions/*) ;; # only the build, no release needed
+                *) notes="${notes}Abhängigkeiten aktualisiert (Dependabot): ${title}"$'\n' ;;
+              esac
+            else
+              echo "#$number ($title): Merge nicht möglich (Konflikt? Dependabot baut den Pull Request neu); nächste Woche wieder"
+            fi
+          done < prs.tsv
+          echo "merged=$merged" >> "$GITHUB_OUTPUT"
+          { echo "notes<<END_OF_NOTES"; printf '%s' "$notes"; echo "END_OF_NOTES"; } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: [rules, dependabot]
+    if: always() && (needs.rules.outputs.merged == 'true' || needs.dependabot.outputs.notes != '')
+    uses: ./.github/workflows/auto-release.yml
+    with:
+      note: |
+        ${{ needs.rules.outputs.merged == 'true' && format('Prüfregeln für E-Rechnungen aktualisiert ({0})', needs.rules.outputs.versions) || '' }}
+        ${{ needs.dependabot.outputs.notes }}
+    permissions:
+      contents: write
+      actions: write
