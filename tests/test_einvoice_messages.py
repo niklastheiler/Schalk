@@ -45,3 +45,13 @@ def test_every_rule_is_shown_in_german(rule_id):
 def test_missing_seller_identifier_is_explained():
     message = german_message("BR-CO-26", "")
     assert "Steuernummer oder USt-IdNr." in message
+
+
+@pytest.mark.parametrize("old, new", [("AF", "IG"), ("AG", "IP")])
+def test_renamed_canary_and_ceuta_rules_are_translated_like_before(old, new):
+    """EN 16931 1.3.17 renamed BR-AF-* to BR-IG-* and BR-AG-* to BR-IP-*: same German text as before."""
+    for number in range(1, 11):
+        old_id, new_id = f"BR-{old}-{number:02d}", f"BR-{new}-{number:02d}"
+        message = german_message(new_id, "")
+        assert "technisch fehlerhaft" not in message
+        assert message == german_message(old_id, "").replace(old_id, new_id)

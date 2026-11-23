@@ -226,6 +226,8 @@ RULES = {
 }
 
 # VAT categories (UNCL 5305) as named in the rule IDs: BR-S-*, BR-Z-*, ...
+# EN 16931 1.3.17 renamed the rules of the Canary Islands (AF -> IG) and Ceuta/Melilla (AG -> IP)
+_RENAMED = {"IG": "AF", "IP": "AG"}
 CATEGORIES = {
     "S": "Regelsteuersatz", "Z": "Nullsatz", "E": "Steuerbefreit", "AE": "Reverse Charge (Steuerschuldnerschaft des Leistungsempfängers)",
     "IC": "Innergemeinschaftliche Lieferung", "G": "Ausfuhrlieferung", "O": "Nicht steuerbar",
@@ -265,6 +267,7 @@ _SPECIAL = {
 
 
 def _category_message(code: str, number: int) -> str:
+    code = _RENAMED.get(code, code)
     c = CATEGORIES[code]
     if code == "IC" and number in (11, 12):
         return _SPECIAL[(code, number)]
@@ -302,7 +305,7 @@ def german_message(rule_id: str, text: str = "") -> str:
     rule_id = (rule_id or "").strip()
     if rule_id in RULES:
         return f"{RULES[rule_id]} [{rule_id}]"
-    m = re.fullmatch(r"BR-(S|Z|E|AE|IC|G|O|AF|AG)-(\d+)", rule_id)
+    m = re.fullmatch(r"BR-(S|Z|E|AE|IC|G|O|AF|AG|IG|IP)-(\d+)", rule_id)
     if m and int(m.group(2)) in _CATEGORY_RULES:
         return f"{_category_message(m.group(1), int(m.group(2)))} [{rule_id}]"
     m = re.fullmatch(r"BR-DEC-\d+", rule_id)
