@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.5.1
+
+- Prüfregeln für E-Rechnungen aktualisiert (EN16931 1.3.17, XRechnung 3.0.2, Mustang 2.26.0)
+
 ## 1.4.5
 
 - Behoben: Nach einem Update blieb das Fenster beim ersten Start grau und reagierte nicht. Die Prüfregeln für E-Rechnungen werden jetzt erst beim ersten Festschreiben geladen.
