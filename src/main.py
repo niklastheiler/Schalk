@@ -86,6 +86,21 @@ def _validate_with_wait_cursor(db_controller, invoice):
         QApplication.restoreOverrideCursor()
 
 
+def archive_folders() -> tuple:
+    return paths.INVOICE_ARCHIVE_DIR, paths.REMINDER_ARCHIVE_DIR, paths.INCOMING_INVOICES_DIR, paths.RECEIPTS_DIR
+
+
+def _protect_archives_in_background():
+    """Archived documents cannot be deleted in Windows Explorer (icacls runs as its own process, the UI stays free)."""
+    import threading
+    from src.utils.archive import protect_folder
+
+    def protect():
+        for folder in archive_folders():
+            protect_folder(folder)
+    threading.Thread(target=protect, name="archive-protection", daemon=True).start()
+
+
 def main():
     setup_logging()
     install_excepthook()
@@ -122,6 +137,7 @@ def main():
     window.check_integrity_on_startup()
     window.updates.start()
     QTimer.singleShot(1000, window, window.remind_of_backup_when_ready)
+    _protect_archives_in_background()
     logger.info("Schalk gestartet, Daten in %s", paths.DATA_DIR)
 
     if not window.isVisible():

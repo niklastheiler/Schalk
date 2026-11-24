@@ -44,7 +44,24 @@ class DatevGenerator:
             logger.exception("DATEV-Export der Rechnungen fehlgeschlagen")
             return False
 
+    @staticmethod
+    def exportable_cashbook_entries(db_controller: DBController, entries: list) -> list:
+        """
+        Finalized entries without cancelled ones: an entry and its Storno-Gegenbuchung cancel each other out,
+        like a cancelled invoice and its Stornorechnung, and their receipts are not handed to the tax advisor.
+        """
+        all_entries = db_controller.get_cashbook_entries()
+        cancelled = {e.storno_of_id for e in all_entries if e.is_storno and e.storno_of_id}
+        return [e for e in entries if e.finalized_at and not e.is_storno and e.id not in cancelled]
+
+    @staticmethod
+    def exported_before(db_controller: DBController, entries: list) -> list:
+        """Entries of the list that already went to the tax advisor with an earlier DATEV export."""
+        return [e for e in entries
+                if any(h.action == "DATEV Export" for h in db_controller.get_document_history("Cashbook", e.id))]
+
     def generate_cashbook_export(self, entries: list, filepath: str) -> bool:
+        entries = self.exportable_cashbook_entries(self.db_controller, entries)
         try:
             attachments = [(e, paths.resolve(e.attachment_path)) for e in entries if e.attachment_path]
             files = {f"{e.receipt_number}_{os.path.basename(path)}": path for e, path in attachments if os.path.isfile(path)}

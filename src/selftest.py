@@ -51,6 +51,25 @@ def _check(controller):
     problems = controller.verify_integrity(check_files=True)
     if problems:
         raise AssertionError("Integritätsprüfung: " + "; ".join(problems))
+    # Receipts are shown inside Schalk (QtPdf must be part of the EXE)
+    from PySide6.QtPdf import QPdfDocument
+    document = QPdfDocument()
+    if document.load(build_invoice_pdf(controller, invoice)) != QPdfDocument.Error.None_ or document.pageCount() < 1:
+        raise AssertionError("PDF-Vorschau (QtPdf) funktioniert nicht")
+    # Archived documents cannot be deleted
+    from src.utils.archive import archive_file, protect_folder
+    folder = os.path.join(paths.DATA_DIR, "geschuetzt")
+    archived, _ = archive_file(target, folder)
+    if os.name == "nt":
+        if not protect_folder(folder):
+            raise AssertionError("Löschschutz des Archivs konnte nicht gesetzt werden")
+        try:
+            os.chmod(archived, 0o666)
+            os.remove(archived)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Archivierte Datei ließ sich trotz Löschschutz löschen")
 
 
 def run() -> int:

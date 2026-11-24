@@ -17,8 +17,15 @@ _MONEY = r"(-?\d{1,3}(?:[.,' ]\d{3})+[.,]\d{2}|-?\d+[.,]\d{2})"
 # Labels of the amount to pay, most specific first: "Summe netto" or "Betrag" alone come last
 _AMOUNT_LABELS = [
     r"Gesamtbetrag", r"Rechnungsbetrag", r"Endbetrag", r"Zahlbetrag", r"zu zahlen(?:der Betrag)?", r"Bruttobetrag",
-    r"(?:Gesamt)?summe\s+brutto", r"Brutto(?:summe)?", r"Total(?:\s+amount)?|Amount\s+due", r"Gesamt", r"Summe", r"Betrag",
+    r"(?:Gesamt)?summe\s+brutto", r"Brutto(?:summe)?", r"Total(?:\s+amount)?|Amount\s+due",
 ]
+# Generic labels only count at the start of a line ("Summe: 119,00 €"), not inside a sentence like
+# "Leistungen bis zu einem Betrag von 100.000,00 €" of a letter without an amount to pay
+_GENERIC_AMOUNT_LABELS = [r"Gesamt", r"Summe", r"Betrag"]
+# Amounts that are limits or insured sums, never the amount of an invoice
+_NOT_AN_INVOICE_AMOUNT = re.compile(
+    r"versicherungssumme|deckungssumme|höchst|maximal|bis\s+zu|selbstbeteiligung|stammkapital|grundkapital|"
+    r"kreditlimit|limit", re.IGNORECASE)
 _NUMBER_LABEL = (r"(?:Rechnungs?[- ]?(?:nummer|nr\.?|no\.?)|Rechnung\s+(?:Nr\.?|Nummer)|Re\.?-?\s?Nr\.?|"
                  r"Beleg(?:nummer|-?nr\.?)|Invoice\s*(?:No\.?|Number|#))")
 _NUMBER_VALUE = r"([A-Za-z0-9][A-Za-z0-9\-/_.]*\d[A-Za-z0-9\-/_]*)"
@@ -63,10 +70,16 @@ def _parse_date(text: str) -> Optional[date]:
 
 
 def guess_amount(text: str) -> float:
-    for label in _AMOUNT_LABELS:
+    """The amount to pay; 0 if none is recognized (the user enters it then)."""
+    patterns = [rf"\b(?:{label})[^\d\n-]{{0,40}}(?:\n[^\d\n-]{{0,40}})?{_MONEY}" for label in _AMOUNT_LABELS]
+    patterns += [rf"^[ \t]*(?:{label})\b[^\d\n-]{{0,40}}{_MONEY}" for label in _GENERIC_AMOUNT_LABELS]
+    for pattern in patterns:
         # Whole words: "Subtotal" is no "Total", "Zwischensumme" no "Summe"
-        match = re.search(rf"\b(?:{label})[^\d\n-]{{0,40}}(?:\n[^\d\n-]{{0,40}})?{_MONEY}", text, re.IGNORECASE)
-        if match:
+        for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            if _NOT_AN_INVOICE_AMOUNT.search(text[line_start:line_end if line_end >= 0 else len(text)]):
+                continue
             try:
                 return _to_float(match.group(1))
             except ValueError:

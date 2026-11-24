@@ -11,7 +11,7 @@ from src.utils.archive import is_pdf
 from src.utils.receipt_recognition import EXPENSE, INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREY, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
-                              notify_success, open_document)
+                              notify_success, notify_warning, open_document)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
 from src.views.invoice_interface import MonthDialog, add_action
@@ -364,7 +364,21 @@ class CashbookInterface(UnsavedChanges, ListPage):
         if not dialog.exec():
             return
         selected = dialog.monthCombo.currentText()
-        export = [e for e in entries if e.entry_date.strftime("%Y-%m") == selected]
+        month = [e for e in entries if e.entry_date.strftime("%Y-%m") == selected]
+        export = DatevGenerator.exportable_cashbook_entries(self.db_controller, month)
+        # A cancellation of an entry that already went to the tax advisor must be reported to them
+        storno_ids = {e.storno_of_id for e in month if e.is_storno}
+        cancelled_earlier = DatevGenerator.exported_before(
+            self.db_controller, [e for e in self.db_controller.get_cashbook_entries() if e.id in storno_ids])
+        if cancelled_earlier:
+            numbers = ", ".join(e.receipt_number for e in cancelled_earlier)
+            notify_warning(self, "Storno bereits exportierter Belege",
+                           f"{numbers} wurde(n) schon früher an DATEV übergeben und in diesem Monat storniert. "
+                           "Bitte dem Steuerberater mitteilen.", duration=-1)
+        if not [e for e in export if e.attachment_path]:
+            notify_error(self, "Kein Export", "In diesem Monat gibt es keine Belege für DATEV: Stornierte Buchungen "
+                                              "und ihre Storno-Gegenbuchungen werden nicht exportiert.")
+            return
         target, _ = QFileDialog.getSaveFileName(self, "DATEV-Export speichern",
                                                 paths.desktop_path(f"DATEV_Export_Kassenbuch_{selected.replace('-', '_')}.zip"), "ZIP (*.zip)")
         if not target:

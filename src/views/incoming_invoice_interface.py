@@ -1,9 +1,11 @@
 import logging
 import os
+import re
 from datetime import datetime
 from PySide6.QtCore import QDate, QLocale, Qt
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QTextBrowser, QVBoxLayout, QWidget
-from qfluentwidgets import (BodyLabel, DoubleSpinBox, FluentIcon as FIF, LineEdit, MessageBoxBase,
+from qfluentwidgets import (BodyLabel, FluentIcon as FIF, LineEdit, MessageBoxBase,
                             PushButton, RoundMenu, ScrollArea, SubtitleLabel)
 from src.controllers.db_controller import DBController
 from src.utils import paths
@@ -57,19 +59,36 @@ class IncomingInvoiceDialog(MessageBoxBase):
         self.datePicker = GermanDatePicker(self)
         self.datePicker.setDate(QDate(date_obj.year, date_obj.month, date_obj.day))
         self._field(form, "Rechnungsdatum", self.datePicker)
-        self.amountSpin = DoubleSpinBox(self)
-        self.amountSpin.setLocale(QLocale(QLocale.German, QLocale.Germany))
-        self.amountSpin.setRange(-9_999_999.99, 9_999_999.99)
-        self.amountSpin.setDecimals(2)
-        self.amountSpin.setGroupSeparatorShown(True)
-        self.amountSpin.setSuffix(" €")
-        self.amountSpin.setValue(amount)
-        self._field(form, "Betrag brutto", self.amountSpin)
+        # A plain text field like in the cash book: the spin box of the UI library showed no value on some
+        # Windows displays. Empty when nothing was recognized, so a wrong suggestion is never saved unnoticed.
+        self.amountEdit = LineEdit(self)
+        validator = QDoubleValidator(-100_000_000.0, 100_000_000.0, 2, self.amountEdit)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+        validator.setLocale(QLocale(QLocale.German, QLocale.Germany))
+        self.amountEdit.setValidator(validator)
+        self.amountEdit.setPlaceholderText("z. B. 119,00 (Gutschrift mit Minus)")
+        self.amountEdit.setText(f"{amount:.2f}".replace(".", ",") if amount else "")
+        self.amountEdit.textChanged.connect(lambda: self.amountEdit.setError(False))
+        self._field(form, "Betrag brutto (€)", self.amountEdit)
         self.descEdit = self._field(form, "Beschreibung", LineEdit(self), description)
         self.viewLayout.addLayout(form)
         self.yesButton.setText("Speichern")
         self.cancelButton.setText("Abbrechen")
         self.widget.setMinimumWidth(520)
+
+    def amount(self):
+        """The entered amount, None if the field is empty or not a number."""
+        from src.views.document_editor import _parse_number
+        text = self.amountEdit.text().strip()
+        value = _parse_number(text, None) if text else None
+        return value if value else None
+
+    def validate(self) -> bool:
+        if self.amount() is None:
+            self.amountEdit.setError(True)
+            self.amountEdit.setFocus()
+            return False
+        return True
 
     def _add_warnings(self, messages: list):
         box = QWidget()
@@ -99,7 +118,7 @@ class IncomingInvoiceDialog(MessageBoxBase):
         return {
             "description": self.descEdit.text().strip(),
             "date": datetime.combine(self.datePicker.date.toPython(), datetime.min.time()),
-            "amount": self.amountSpin.value(),
+            "amount": self.amount() or 0.0,
             "supplier_name": self.supplierEdit.text().strip(),
             "invoice_number": self.numberEdit.text().strip(),
         }
@@ -125,6 +144,10 @@ class EInvoiceViewer(QDialog):
         buttons.addWidget(original)
         buttons.addWidget(close)
         layout.addLayout(buttons)
+
+
+def _safe_name(text: str) -> str:
+    return re.sub(r'[<>:"/\\|?*\s]+', "_", text).strip("_.")[:80]
 
 
 class IncomingInvoiceInterface(ListPage):
@@ -155,25 +178,56 @@ class IncomingInvoiceInterface(ListPage):
 
     def fill_context_menu(self, menu: RoundMenu, invoice):
         add_action(menu, FIF.VIEW, "Anzeigen", lambda: self.open_invoice(invoice))
-        add_action(menu, FIF.DOCUMENT, "Originaldatei öffnen", lambda: self.open_file(invoice.file_path))
+        if invoice.einvoice_format and paths.resolve(invoice.file_path).lower().endswith(".pdf"):
+            add_action(menu, FIF.CODE, "E-Rechnungsdaten anzeigen", lambda: self.show_einvoice_data(invoice))
+        add_action(menu, FIF.DOCUMENT, "Mit PDF-Programm öffnen", lambda: self.open_file(invoice.file_path))
         if not invoice.cancelled_at:
             add_action(menu, FIF.CANCEL, "Stornieren", lambda: self.cancel(invoice.id))
 
-    def open_file(self, path):
-        open_document(self, paths.resolve(path))
+    def _archived_path(self, invoice):
+        """Path of the archived document, None (with a message) if it is missing."""
+        path = paths.resolve(invoice.file_path)
+        if path and os.path.isfile(path):
+            return path
+        logger.error("Archivierter Beleg fehlt: %s", invoice.file_path)
+        notify_error(self, "Beleg fehlt im Archiv",
+                     "Die archivierte Datei ist nicht mehr vorhanden. Bitte unter Einstellungen → Sicherheit & GoBD "
+                     "ein Backup einspielen: Fehlende Belege werden daraus wiederhergestellt.")
+        return None
+
+    def open_file(self, stored_path):
+        path = paths.resolve(stored_path)
+        if path and os.path.isfile(path):
+            open_document(self, path)
+        else:
+            notify_error(self, "Beleg fehlt im Archiv", "Die archivierte Datei ist nicht mehr vorhanden.")
 
     def open_invoice(self, invoice):
-        path = paths.resolve(invoice.file_path)
+        """Double click: the original receipt as it was received (PDF in Schalk, XRechnung as readable view)."""
+        path = self._archived_path(invoice)
+        if not path:
+            return
+        if path.lower().endswith(".pdf"):
+            from src.views.document_viewer import PdfViewer
+            title = " – ".join(p for p in (invoice.supplier_name, invoice.invoice_number, fmt_date(invoice.date)) if p)
+            name = "_".join(p for p in (invoice.supplier_name, invoice.invoice_number) if p) or f"Beleg_{invoice.id}"
+            PdfViewer(path, title or "Beleg", f"{_safe_name(name)}.pdf", self.window()).exec()
+        else:
+            self.show_einvoice_data(invoice)
+
+    def show_einvoice_data(self, invoice):
+        path = self._archived_path(invoice)
+        if not path:
+            return
         data = None
-        if invoice.einvoice_format and os.path.isfile(path):
-            try:
-                data = read_einvoice(path)
-            except Exception:
-                logger.exception("E-Rechnung %s konnte nicht gelesen werden", path)
+        try:
+            data = read_einvoice(path)
+        except Exception:
+            logger.exception("E-Rechnung %s konnte nicht gelesen werden", path)
         if data:
             EInvoiceViewer(data, path, self.window()).exec()
         else:
-            self.open_file(path)
+            open_document(self, path)
 
     def cancel(self, invoice_id):
         if confirm(self, "Rechnung stornieren",
