@@ -8,6 +8,7 @@ release instead of on the users' computers. Exit code 0 = everything works; othe
 %TEMP%\\schalk_selbsttest.log.
 """
 import os
+import stat
 import tempfile
 import traceback
 from datetime import datetime, timezone
@@ -64,7 +65,7 @@ def _check(controller):
         if not protect_folder(folder):
             raise AssertionError("Löschschutz des Archivs konnte nicht gesetzt werden")
         try:
-            os.chmod(archived, 0o666)
+            os.chmod(archived, stat.S_IWRITE | stat.S_IREAD)
             os.remove(archived)
         except PermissionError:
             pass
