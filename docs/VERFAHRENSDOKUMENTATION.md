@@ -37,7 +37,7 @@ am besten zusammen mit dem Steuerberater. Bei jeder neuen Schalk-Version prüfen
 Belegnummern (`K` + Jahr + laufende Nummer) und versiegelt die Buchungen. Korrektur danach nur per Storno-Gegenbuchung.
 Der Bestand darf an keinem Tag negativ werden. ✎ Festschreib-Rhythmus festlegen (Empfehlung: täglich, § 146 Abs. 1 S. 2 AO).
 
-**Erhaltene Rechnungen**: Hochladen als PDF, ZUGFeRD-PDF oder XRechnung (CII/UBL). Strukturierte Daten werden übernommen,
+**Erhaltene Rechnungen**: Hochladen als PDF, ZUGFeRD-PDF oder XRechnung (CII/UBL). Ein Doppelklick zeigt den archivierten Originalbeleg in Schalk. Strukturierte Daten werden übernommen,
 CII-Rechnungen gegen EN 16931 geprüft. Das Prüfergebnis steht im Verlauf, die Originaldatei wird unverändert und
 schreibgeschützt mit SHA-256 archiviert. Dubletten werden gemeldet. Erhaltene Rechnungen werden nie gelöscht, nur storniert.
 ✎ Wer prüft erhaltene Rechnungen sachlich (Leistung erhalten, Betrag richtig) und wann?
@@ -49,7 +49,7 @@ schreibgeschützt mit SHA-256 archiviert. Dubletten werden gemeldet. Erhaltene R
 | Plattform | Windows 11 ab 24H2, 64 Bit; Installation nach `C:\Programme\Schalk` (Inno Setup) |
 | Datenhaltung | SQLite-Datenbank, nur im Arbeitsspeicher entschlüsselt; Datei `%LOCALAPPDATA%\Schalk\schalk.enc.db`, Fernet (AES-128-CBC + HMAC-SHA256), atomar geschrieben (temporäre Datei + `os.replace`) |
 | Schlüssel | zufällig erzeugt, per Windows-DPAPI an das Benutzerkonto gebunden (`schalk.key`) |
-| Archiv | `%LOCALAPPDATA%\Schalk\app_data\archive\invoices` (Rechnungen), `…\archive\reminders` (Mahnungen), `…\app_data\incoming_invoices` (erhaltene Rechnungen), `…\assets\receipts` (Kassenbelege); Dateien schreibgeschützt, SHA-256 in der Datenbank |
+| Archiv | `%LOCALAPPDATA%\Schalk\app_data\archive\invoices` (Rechnungen), `…\archive\reminders` (Mahnungen), `…\app_data\incoming_invoices` (erhaltene Rechnungen), `…\assets\receipts` (Kassenbelege); Dateien schreibgeschützt, SHA-256 in der Datenbank; die Ordner sind per Windows-Berechtigung gegen Löschen und Umbenennen gesperrt (Verweigern „Löschen“ für Jeder, setzt Schalk bei jedem Start) |
 | Tabellen | `invoices`, `invoice_items`, `payments`, `quotes`, `quote_items`, `cashbook_entries`, `incoming_invoices`, `customers`, `settings`, `document_history` |
 | Hash-Ketten | SHA-256 über (Datensatzinhalt + Vorgänger-Hash) für festgeschriebene Rechnungen inklusive Positionen, Verkäufer- und Empfängerdaten, für Kassenbuchungen und für **jeden** Verlaufseintrag |
 | Integritätsprüfung | beim Start im Hintergrund (ohne Dateien), vollständig unter Einstellungen → Sicherheit & GoBD: alle Ketten, lückenlose Nummern je Jahr, Zahlungen gegen den bezahlten Betrag, Hash aller archivierten Dateien |
@@ -73,6 +73,7 @@ schreibgeschützt mit SHA-256 archiviert. Dubletten werden gemeldet. Erhaltene R
 | ZUGFeRD-PDF / XRechnung | Ausgang | Rechnung an Kunden bzw. Behörden (Leitweg-ID als Käuferreferenz) |
 | E-Rechnungs-Import | Eingang | XRechnung/ZUGFeRD/UBL; PDF ohne strukturierte Daten |
 | „DATEV Export“ | Ausgang | ZIP mit den bezahlten Rechnungen eines Monats für Steuerberater/DATEV Unternehmen online (keine Buchungssätze). Stornierte Rechnungen und ihre Stornorechnungen sind nicht enthalten. |
+| „DATEV Export“ Kassenbuch | Ausgang | ZIP mit den Belegen der festgeschriebenen Kassenbuchungen eines Monats. Stornierte Buchungen und ihre Storno-Gegenbuchungen sind nicht enthalten; wurde eine bereits exportierte Buchung storniert, weist Schalk darauf hin, den Steuerberater zu informieren. |
 | **GoBD-Datenexport** | Ausgang | Einstellungen → Sicherheit & GoBD: Rechnungen, Positionen, Zahlungen, Kassenbuch, erhaltene Rechnungen, Kunden, Verlauf als CSV (UTF-8, `;`, Dezimalkomma) mit `index.xml` nach dem Beschreibungsstandard (GDPdU), optional mit allen Belegen. Gedacht für die Datenträgerüberlassung (Z3). Jeder Export wird im Verlauf protokolliert. |
 
 Datenzugriff Z1/Z2 ✎: Der Prüfer erhält am Arbeitsplatz Lesezugriff über die Oberfläche. Schalk hat keine eigene Prüferrolle,
