@@ -3,7 +3,8 @@ import logging
 import os
 import shutil
 import stat
-import subprocess  # nosec B404: only icacls with fixed arguments
+# Only icacls with fixed arguments is started (see _icacls)
+import subprocess  # nosec B404
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
