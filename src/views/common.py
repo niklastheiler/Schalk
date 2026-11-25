@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 from PySide6.QtCore import QAbstractTableModel, QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QPersistentModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea, QFrame, QHBoxLayout, QHeaderView, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (ComboBox, InfoBar, InfoBarPosition, MessageBox, PrimaryPushButton, PushButton,
                             RoundMenu, SearchLineEdit, SubtitleLabel, TableView)
@@ -79,6 +79,42 @@ def style_scrollbars(area: QAbstractScrollArea):
 
 # Lines between table cells: fine, but clearly visible on the light background
 GRID_COLOR = "#C8C8C8"
+
+
+class GridTableView(TableView):
+    """
+    Table with fine lines between the cells, so rows and columns are easy to follow. Drawn over the cells
+    by the table itself: a style sheet or style of its own would interfere with the one of the UI library.
+    """
+
+    def showGrid(self) -> bool:
+        return True
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(QColor(GRID_COLOR), 1))
+        model = self.model()
+        rows = model.rowCount() if model else 0
+        columns = model.columnCount() if model else 0
+        if not rows or not columns:
+            painter.end()
+            return
+        header = self.horizontalHeader()
+        right = min(self.viewport().width(), header.sectionViewportPosition(columns - 1) + header.sectionSize(columns - 1))
+        last = self.rowViewportPosition(rows - 1) + self.rowHeight(rows - 1)
+        bottom = min(self.viewport().height(), last)
+        for row in range(rows):
+            y = self.rowViewportPosition(row) + self.rowHeight(row) - 1
+            if 0 <= y <= bottom:
+                painter.drawLine(0, y, right, y)
+        for column in range(columns - 1):
+            if self.isColumnHidden(column):
+                continue
+            x = header.sectionViewportPosition(column) + header.sectionSize(column) - 1
+            if 0 <= x <= right:
+                painter.drawLine(x, 0, x, bottom)
+        painter.end()
 
 
 def use_classic_scrollbars(view):
@@ -543,7 +579,7 @@ class ListPage(QWidget):
         self.proxy = RecordFilterProxy(date_of, self)
         self.proxy.setSourceModel(self.model)
 
-        self.table = TableView(self)
+        self.table = GridTableView(self)
         use_classic_scrollbars(self.table)
         self.table.setModel(self.proxy)
         header = self.table.horizontalHeader()
@@ -554,10 +590,6 @@ class ListPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setWordWrap(False)
-        # Fine but visible lines between the cells, so rows and columns are easy to follow
-        self.table.setShowGrid(True)
-        self.table.setStyleSheet(self.table.styleSheet() + f"QTableView {{ gridline-color: {GRID_COLOR}; }}")
-        self.table.setBorderVisible(True)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(38)
