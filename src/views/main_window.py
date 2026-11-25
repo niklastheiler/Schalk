@@ -1,5 +1,7 @@
+import weakref
 from datetime import datetime
-from PySide6.QtCore import QTimer, Signal
+import shiboken6
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
 from src.controllers.db_controller import DBController
@@ -24,6 +26,40 @@ MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "Au
 
 # Narrowest window (in logical pixels) in which the expanded menu stays beside the pages
 NAVIGATION_INLINE_WIDTH = 1100
+
+
+class _MouseNavigation(QObject):
+    """
+    Back and forward buttons of the mouse anywhere in the main window (not in dialogs). One filter for the whole
+    application, owned by it: it never refers to a destroyed window (only a weak reference, checked before use).
+    """
+    _instance = None
+
+    @classmethod
+    def attach(cls, window):
+        if cls._instance is None or not shiboken6.isValid(cls._instance):
+            app = QApplication.instance()
+            cls._instance = cls(app)
+            app.installEventFilter(cls._instance)
+        cls._instance._window = weakref.ref(window)
+        return cls._instance
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._window = lambda: None
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.MouseButtonPress or event.button() not in (Qt.BackButton, Qt.ForwardButton):
+            return False
+        window = self._window()
+        if window is None or not shiboken6.isValid(window) or QApplication.activeModalWidget() is not None \
+                or QApplication.activeWindow() is not window:
+            return False
+        if event.button() == Qt.BackButton:
+            window.go_back()
+        else:
+            window.go_forward()
+        return True
 
 
 class MainWindow(FluentWindow):
@@ -55,6 +91,14 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
         self._guard_tab_changes()
+        # Tabs visited, for the back and forward buttons of the mouse
+        self._history = [self.stackedWidget.currentWidget()]
+        self._history_pos = 0
+        self._navigating = False
+        self.stackedWidget.currentChanged.connect(self._remember_tab)
+        # A separate filter object: the application calls it for every event, also while a window is being
+        # destroyed; it touches the window only for the two mouse buttons
+        self._mouse_navigation = _MouseNavigation.attach(self)
 
         self.updates = UpdateNotifier(self)
         self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
@@ -110,6 +154,37 @@ class MainWindow(FluentWindow):
                 return
             switch(widget, popOut)
         stacked.setCurrentWidget = guarded
+
+    # --- Back and forward buttons of the mouse ---
+    def _remember_tab(self, _index=None):
+        current = self.stackedWidget.currentWidget()
+        if self._navigating or current is self._history[self._history_pos]:
+            return
+        del self._history[self._history_pos + 1:]
+        self._history.append(current)
+        self._history_pos = len(self._history) - 1
+
+    def go_back(self):
+        """Back: closes an open editor (asking about unsaved input), otherwise the previously visited tab."""
+        view = self.stackedWidget.currentWidget()
+        editor = getattr(view, "editor", None)
+        if editor is not None and view.stackedWidget.currentWidget() is editor:
+            view.leave_editor()
+            return
+        self._go_to(self._history_pos - 1)
+
+    def go_forward(self):
+        self._go_to(self._history_pos + 1)
+
+    def _go_to(self, position: int):
+        if not 0 <= position < len(self._history):
+            return
+        self._navigating = True
+        try:
+            if self.switchTo(self._history[position]):
+                self._history_pos = position
+        finally:
+            self._navigating = False
 
     def switchTo(self, interface) -> bool:
         """Switches the tab; False if the user stayed because of unsaved input."""
