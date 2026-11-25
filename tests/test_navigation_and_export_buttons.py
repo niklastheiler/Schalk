@@ -87,3 +87,12 @@ def test_tables_show_grid_lines(window, qapp):
     for page in (window.invoice_interface.list_page, window.customer_interface.list_page, window.cashbook_interface,
                  window.supplier_invoice_interface, window.quote_interface.list_page, window.reminder_interface):
         assert isinstance(page.table, GridTableView) and page.table.showGrid() and GRID_COLOR
+
+
+def test_cells_are_filled_evenly(window, qapp):
+    """No zebra stripes and no rounded, inset rows next to the grid lines."""
+    table = window.invoice_interface.list_page.table
+    assert not table.alternatingRowColors() and table.delegate.margin == 0
+    status_delegate = next(d for i in range(table.model().columnCount())
+                           if (d := table.itemDelegateForColumn(i)) is not None)
+    assert status_delegate.margin == 0
