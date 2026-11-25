@@ -1,4 +1,6 @@
+import weakref
 from datetime import datetime
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
@@ -27,21 +29,37 @@ NAVIGATION_INLINE_WIDTH = 1100
 
 
 class _MouseNavigation(QObject):
-    """Back and forward buttons of the mouse anywhere in the main window (not in dialogs)."""
+    """
+    Back and forward buttons of the mouse anywhere in the main window (not in dialogs). One filter for the whole
+    application, owned by it: it never refers to a destroyed window (only a weak reference, checked before use).
+    """
+    _instance = None
 
-    def __init__(self, window):
-        super().__init__() # no parent: lives as long as the window keeps a reference
-        self.window = window
+    @classmethod
+    def attach(cls, window):
+        if cls._instance is None or not shiboken6.isValid(cls._instance):
+            app = QApplication.instance()
+            cls._instance = cls(app)
+            app.installEventFilter(cls._instance)
+        cls._instance._window = weakref.ref(window)
+        return cls._instance
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._window = lambda: None
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.MouseButtonPress and event.button() in (Qt.BackButton, Qt.ForwardButton) \
-                and QApplication.activeModalWidget() is None and QApplication.activeWindow() is self.window:
-            if event.button() == Qt.BackButton:
-                self.window.go_back()
-            else:
-                self.window.go_forward()
-            return True
-        return False
+        if event.type() != QEvent.MouseButtonPress or event.button() not in (Qt.BackButton, Qt.ForwardButton):
+            return False
+        window = self._window()
+        if window is None or not shiboken6.isValid(window) or QApplication.activeModalWidget() is not None \
+                or QApplication.activeWindow() is not window:
+            return False
+        if event.button() == Qt.BackButton:
+            window.go_back()
+        else:
+            window.go_forward()
+        return True
 
 
 class MainWindow(FluentWindow):
@@ -80,10 +98,7 @@ class MainWindow(FluentWindow):
         self.stackedWidget.currentChanged.connect(self._remember_tab)
         # A separate filter object: the application calls it for every event, also while a window is being
         # destroyed; it touches the window only for the two mouse buttons
-        self._mouse_navigation = mouse_navigation = _MouseNavigation(self)
-        app = QApplication.instance()
-        app.installEventFilter(mouse_navigation)
-        self.destroyed.connect(lambda *_: app.removeEventFilter(mouse_navigation))
+        self._mouse_navigation = _MouseNavigation.attach(self)
 
         self.updates = UpdateNotifier(self)
         self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
