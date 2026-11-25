@@ -37,7 +37,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
         super().__init__("Kassenbuch", columns, (SignalBus.get().cashbookChanged,), date_of=lambda e: e.entry_date,
                          row_color=lambda e: COLOR_GREY if e.is_storno or e.id in self._cancelled else None, parent=parent)
         self.setObjectName("CashbookInterface")
-        self.add_header_button("DATEV Export", self.show_datev_export_dialog)
+        self.datevButton = self.add_header_button("DATEV Export", self.show_datev_export_dialog)
         self.finalizeBtn = self.add_header_button("Festschreiben", self.finalize_cashbook)
         self.addBtn = self.add_header_button("Eintrag hinzufügen", self.add_entry, primary=True)
         self._build_form()
@@ -203,6 +203,10 @@ class CashbookInterface(UnsavedChanges, ListPage):
         self.reset_form()
 
     def on_refreshed(self, records: list):
+        from src.utils.datev_generator import DatevGenerator
+        exportable = DatevGenerator.exportable_cashbook_entries(self.db_controller, records)
+        self.set_export_enabled(self.datevButton, any(e.attachment_path for e in exportable),
+                                "Keine festgeschriebenen Buchungen mit Beleg (stornierte zählen nicht)")
         self._cancelled = self.db_controller.cancelled_cashbook_ids()
         self.balanceLabel.setText(fmt_money(self.db_controller.get_cashbook_balance()))
         drafts = self.db_controller.cashbook_draft_count()
@@ -356,7 +360,9 @@ class CashbookInterface(UnsavedChanges, ListPage):
         from src.utils.datev_generator import DatevGenerator
         # Only finalized entries have a receipt number and may leave the system
         entries = [e for e in self.db_controller.get_cashbook_entries() if e.finalized_at]
-        months = sorted({e.entry_date.strftime("%Y-%m") for e in entries}, reverse=True)
+        # Only months with receipts for DATEV (cancelled entries and their stornos do not count)
+        months = sorted({e.entry_date.strftime("%Y-%m") for e in DatevGenerator.exportable_cashbook_entries(
+            self.db_controller, entries) if e.attachment_path}, reverse=True)
         if not months:
             notify_error(self, "Keine Daten", "Es gibt keine festgeschriebenen Kassenbucheinträge zum Exportieren.")
             return

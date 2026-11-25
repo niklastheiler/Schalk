@@ -167,11 +167,17 @@ class IncomingInvoiceInterface(ListPage):
         super().__init__(self.TITLES[invoice_type], columns, (SignalBus.get().incomingInvoicesChanged,),
                          date_of=lambda i: i.date, row_color=lambda i: COLOR_GREY if i.cancelled_at else None, parent=parent)
         self.setObjectName(f"IncomingInvoiceInterface_{invoice_type}")
-        self.add_header_button("DATEV Export", self.export_datev)
+        self.datevButton = self.add_header_button("DATEV Export", self.export_datev)
         self.add_header_button("Rechnungen hochladen", self.upload, primary=True)
 
     def records(self) -> list:
         return self.db_controller.get_incoming_invoices(self.invoice_type)
+
+    def apply_filters(self):
+        super().apply_filters()
+        # The export takes the rows shown (year and month filter), without cancelled invoices
+        self.set_export_enabled(self.datevButton, any(not i.cancelled_at for i in self.visible_records()),
+                                "Keine (nicht stornierten) Rechnungen in der aktuellen Auswahl")
 
     def on_activated(self, invoice):
         self.open_invoice(invoice)

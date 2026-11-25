@@ -77,8 +77,13 @@ class InvoiceListPage(ListPage):
         ]
         super().__init__("Kundenrechnungen", columns, (SignalBus.get().invoicesChanged, SignalBus.get().customersChanged),
                          date_of=lambda i: i.invoice_date, row_color=self._row_color, parent=interface)
-        self.add_header_button("DATEV Export", interface.show_datev_export_dialog)
+        self.datevButton = self.add_header_button("DATEV Export", interface.show_datev_export_dialog)
         self.add_header_button("Neue Rechnung", lambda: interface.show_editor(), primary=True)
+
+    def on_refreshed(self, records: list):
+        from src.utils.datev_generator import DatevGenerator
+        self.set_export_enabled(self.datevButton, bool(DatevGenerator.exportable_invoices(self.c)),
+                                "Keine bezahlten Rechnungen zum Exportieren (stornierte zählen nicht)")
 
     def _number_text(self, invoice) -> str:
         if self.c.is_draft_number(invoice.invoice_number):

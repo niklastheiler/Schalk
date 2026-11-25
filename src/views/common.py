@@ -77,6 +77,10 @@ def style_scrollbars(area: QAbstractScrollArea):
     area.horizontalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
 
+# Lines between table cells: fine, but clearly visible on the light background
+GRID_COLOR = "#C8C8C8"
+
+
 def use_classic_scrollbars(view):
     """Replaces the Fluent overlay bars of a Fluent table with the classic bars (smooth wheel scrolling stays)."""
     view.scrollDelagate.vScrollBar.setForceHidden(True)
@@ -550,6 +554,10 @@ class ListPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setWordWrap(False)
+        # Fine but visible lines between the cells, so rows and columns are easy to follow
+        self.table.setShowGrid(True)
+        self.table.setStyleSheet(self.table.styleSheet() + f"QTableView {{ gridline-color: {GRID_COLOR}; }}")
+        self.table.setBorderVisible(True)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(38)
@@ -657,6 +665,11 @@ class ListPage(QWidget):
         pass
 
     # --- Helpers for subclasses ---
+    def set_export_enabled(self, button, enabled: bool, reason: str):
+        """Greys out an export button with nothing to export; the tooltip says why."""
+        button.setEnabled(enabled)
+        button.setToolTip("" if enabled else reason)
+
     def add_header_button(self, text: str, slot, primary: bool = False):
         button = (PrimaryPushButton if primary else PushButton)(text, self)
         button.clicked.connect(slot)

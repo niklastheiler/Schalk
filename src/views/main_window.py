@@ -1,5 +1,5 @@
 from datetime import datetime
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
 from src.controllers.db_controller import DBController
@@ -55,6 +55,12 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settings_interface, FIF.SETTING, 'Einstellungen')
         self.navigationInterface.setCurrentItem(self.invoice_interface.objectName())
         self._guard_tab_changes()
+        # Tabs visited, for the back and forward buttons of the mouse
+        self._history = [self.stackedWidget.currentWidget()]
+        self._history_pos = 0
+        self._navigating = False
+        self.stackedWidget.currentChanged.connect(self._remember_tab)
+        QApplication.instance().installEventFilter(self)
 
         self.updates = UpdateNotifier(self)
         self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
@@ -110,6 +116,47 @@ class MainWindow(FluentWindow):
                 return
             switch(widget, popOut)
         stacked.setCurrentWidget = guarded
+
+    # --- Back and forward buttons of the mouse ---
+    def _remember_tab(self, _index=None):
+        current = self.stackedWidget.currentWidget()
+        if self._navigating or current is self._history[self._history_pos]:
+            return
+        del self._history[self._history_pos + 1:]
+        self._history.append(current)
+        self._history_pos = len(self._history) - 1
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseButtonPress and event.button() in (Qt.BackButton, Qt.ForwardButton) \
+                and QApplication.activeModalWidget() is None and QApplication.activeWindow() is self:
+            if event.button() == Qt.BackButton:
+                self.go_back()
+            else:
+                self.go_forward()
+            return True
+        return super().eventFilter(watched, event)
+
+    def go_back(self):
+        """Back: closes an open editor (asking about unsaved input), otherwise the previously visited tab."""
+        view = self.stackedWidget.currentWidget()
+        editor = getattr(view, "editor", None)
+        if editor is not None and view.stackedWidget.currentWidget() is editor:
+            view.leave_editor()
+            return
+        self._go_to(self._history_pos - 1)
+
+    def go_forward(self):
+        self._go_to(self._history_pos + 1)
+
+    def _go_to(self, position: int):
+        if not 0 <= position < len(self._history):
+            return
+        self._navigating = True
+        try:
+            if self.switchTo(self._history[position]):
+                self._history_pos = position
+        finally:
+            self._navigating = False
 
     def switchTo(self, interface) -> bool:
         """Switches the tab; False if the user stayed because of unsaved input."""
