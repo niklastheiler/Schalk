@@ -1,5 +1,5 @@
 from datetime import datetime
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition, MessageBox, Theme, setTheme, setThemeColor
 from src.controllers.db_controller import DBController
@@ -24,6 +24,24 @@ MONTH_NAMES = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "Au
 
 # Narrowest window (in logical pixels) in which the expanded menu stays beside the pages
 NAVIGATION_INLINE_WIDTH = 1100
+
+
+class _MouseNavigation(QObject):
+    """Back and forward buttons of the mouse anywhere in the main window (not in dialogs)."""
+
+    def __init__(self, window):
+        super().__init__() # no parent: lives as long as the window keeps a reference
+        self.window = window
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseButtonPress and event.button() in (Qt.BackButton, Qt.ForwardButton) \
+                and QApplication.activeModalWidget() is None and QApplication.activeWindow() is self.window:
+            if event.button() == Qt.BackButton:
+                self.window.go_back()
+            else:
+                self.window.go_forward()
+            return True
+        return False
 
 
 class MainWindow(FluentWindow):
@@ -60,7 +78,12 @@ class MainWindow(FluentWindow):
         self._history_pos = 0
         self._navigating = False
         self.stackedWidget.currentChanged.connect(self._remember_tab)
-        QApplication.instance().installEventFilter(self)
+        # A separate filter object: the application calls it for every event, also while a window is being
+        # destroyed; it touches the window only for the two mouse buttons
+        self._mouse_navigation = mouse_navigation = _MouseNavigation(self)
+        app = QApplication.instance()
+        app.installEventFilter(mouse_navigation)
+        self.destroyed.connect(lambda *_: app.removeEventFilter(mouse_navigation))
 
         self.updates = UpdateNotifier(self)
         self.settings_interface.updateCheckRequested.connect(self.updates.check_now)
@@ -125,16 +148,6 @@ class MainWindow(FluentWindow):
         del self._history[self._history_pos + 1:]
         self._history.append(current)
         self._history_pos = len(self._history) - 1
-
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.MouseButtonPress and event.button() in (Qt.BackButton, Qt.ForwardButton) \
-                and QApplication.activeModalWidget() is None and QApplication.activeWindow() is self:
-            if event.button() == Qt.BackButton:
-                self.go_back()
-            else:
-                self.go_forward()
-            return True
-        return super().eventFilter(watched, event)
 
     def go_back(self):
         """Back: closes an open editor (asking about unsaved input), otherwise the previously visited tab."""

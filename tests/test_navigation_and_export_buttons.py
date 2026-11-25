@@ -11,7 +11,7 @@ ITEM = [{"title": "Leistung", "quantity": 1, "unit_price": 100.0, "tax_percent":
 
 def _press(window, button):
     event = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5), button, button, Qt.NoModifier)
-    return window.eventFilter(window, event)
+    return window._mouse_navigation.eventFilter(window, event)
 
 
 def test_mouse_back_and_forward_switch_tabs(window, qapp):
