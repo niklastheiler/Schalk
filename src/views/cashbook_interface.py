@@ -11,7 +11,7 @@ from src.utils.archive import is_pdf
 from src.utils.receipt_recognition import EXPENSE, INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
 from src.views.common import (COLOR_GREY, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
-                              notify_success, notify_warning, open_document)
+                              notify_success, notify_warning)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
 from src.views.invoice_interface import MonthDialog, add_action
@@ -32,7 +32,7 @@ class CashbookInterface(UnsavedChanges, ListPage):
             Column("Beschreibung", lambda e: e.description or ""),
             Column("Betrag", lambda e: fmt_money(c.cashbook_signed_amount(e)), sort=c.cashbook_signed_amount, width=120, descending=True),
             Column("GoBD-Hash", lambda e: f"{e.hash_chain[:8]}…{e.hash_chain[-8:]}" if e.hash_chain else "–", width=170),
-            Column("Beleg", lambda e: "Vorhanden" if e.attachment_path else "-", width=90),
+            Column("Beleg", lambda e: "✓" if e.attachment_path else "✗", width=90),
         ]
         super().__init__("Kassenbuch", columns, (SignalBus.get().cashbookChanged,), date_of=lambda e: e.entry_date,
                          row_color=lambda e: COLOR_GREY if e.is_storno or e.id in self._cancelled else None, parent=parent)
@@ -232,7 +232,15 @@ class CashbookInterface(UnsavedChanges, ListPage):
             add_action(menu, FIF.CANCEL, "Stornieren (Gegenbuchung)", lambda: self.storno_entry(entry.id))
 
     def open_attachment(self, path):
-        open_document(self, paths.resolve(path))
+        """Shows the receipt in Schalk (no PDF program, no attachment panel)."""
+        from src.views.document_viewer import PdfViewer
+        resolved = paths.resolve(path)
+        if not resolved or not os.path.isfile(resolved):
+            notify_error(self, "Beleg fehlt im Archiv",
+                         "Die archivierte Datei ist nicht mehr vorhanden. Bitte unter Einstellungen → Sicherheit & GoBD "
+                         "ein Backup einspielen: Fehlende Belege werden daraus wiederhergestellt.")
+            return
+        PdfViewer(resolved, "Kassenbeleg", os.path.basename(resolved), self.window()).exec()
 
     def attach_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "PDF-Dokumente (*.pdf)")
