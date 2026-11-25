@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.7
+
+- Seitentasten der Maus: Zurück schließt einen offenen Editor oder geht zum vorherigen Reiter, Vor wieder vorwärts
+- DATEV Export ist ausgegraut, wenn nichts zu exportieren ist
+- Feine Linien zwischen den Zellen aller Tabellen
+
 ## 1.4.6
 
 - Lieferanten- und Sonstige Rechnungen: Doppelklick zeigt den Originalbeleg direkt in Schalk
