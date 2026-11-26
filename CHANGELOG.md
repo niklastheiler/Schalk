@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.8
+
+- Tabellen: Linien gleichmäßig ein Pixel breit, Zellen einheitlich gefüllt
+- Kassenbuch: Spalte Beleg mit ✓/✗, Doppelklick zeigt den Beleg in Schalk
+- Neue Rechnungs-PDFs öffnen direkt die Rechnung statt der Anlagen-Leiste
+
 ## 1.4.7
 
 - Seitentasten der Maus: Zurück schließt einen offenen Editor oder geht zum vorherigen Reiter, Vor wieder vorwärts
