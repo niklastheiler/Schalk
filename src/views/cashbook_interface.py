@@ -10,7 +10,7 @@ from src.utils import paths
 from src.utils.archive import is_pdf
 from src.utils.receipt_recognition import EXPENSE, INCOME, recognize_receipt
 from src.utils.signal_bus import SignalBus
-from src.views.common import (COLOR_GREY, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
+from src.views.common import (COLOR_GREY, archived_path, Column, ListPage, UnsavedChanges, confirm, fmt_date, fmt_money, notify_error,
                               notify_success, notify_warning)
 from src.views.date_picker import GermanDatePicker
 from src.views.document_editor import _number_validator, _parse_number
@@ -234,13 +234,9 @@ class CashbookInterface(UnsavedChanges, ListPage):
     def open_attachment(self, path):
         """Shows the receipt in Schalk (no PDF program, no attachment panel)."""
         from src.views.document_viewer import PdfViewer
-        resolved = paths.resolve(path)
-        if not resolved or not os.path.isfile(resolved):
-            notify_error(self, "Beleg fehlt im Archiv",
-                         "Die archivierte Datei ist nicht mehr vorhanden. Bitte unter Einstellungen → Sicherheit & GoBD "
-                         "ein Backup einspielen: Fehlende Belege werden daraus wiederhergestellt.")
-            return
-        PdfViewer(resolved, "Kassenbeleg", os.path.basename(resolved), self.window()).exec()
+        resolved = archived_path(self, path)
+        if resolved:
+            PdfViewer(resolved, "Kassenbeleg", os.path.basename(resolved), self.window()).exec()
 
     def attach_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Beleg auswählen", paths.downloads_dir(), "PDF-Dokumente (*.pdf)")

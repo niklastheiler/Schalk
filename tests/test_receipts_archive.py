@@ -92,7 +92,7 @@ def test_missing_archived_receipt_gives_a_message(controller, seller, tmp_path, 
     os.chmod(invoice.file_path, 0o600)
     os.remove(invoice.file_path)
     errors = []
-    monkeypatch.setattr("src.views.incoming_invoice_interface.notify_error", lambda parent, title, text="": errors.append(title))
+    monkeypatch.setattr("src.views.common.notify_error", lambda parent, title, text="": errors.append(title))
     IncomingInvoiceInterface(controller, "Sonstige").on_activated(invoice)
     assert errors == ["Beleg fehlt im Archiv"]
 
