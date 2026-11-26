@@ -17,6 +17,9 @@ def add_output_intent(pdf: bytes) -> bytes:
     root = writer._root_object
     if "/OutputIntents" in root:
         return pdf
+    # Open on the invoice itself: the Factur-X library asks PDF viewers to show the attachment panel
+    # (factur-x.xml) first, which confused readers. The XML stays embedded and is found by every program.
+    root[NameObject("/PageMode")] = NameObject("/UseNone")
 
     profile = StreamObject()
     profile.set_data(_srgb_profile())

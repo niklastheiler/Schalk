@@ -87,13 +87,27 @@ class GridTableView(TableView):
     by the table itself: a style sheet or style of its own would interfere with the one of the UI library.
     """
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        _flat_cells(self.delegate)
+        # One even fill: the lines separate the rows, stripes are not needed (colours mark state and selection)
+        self.setAlternatingRowColors(False)
+
+    def setItemDelegateForColumn(self, column: int, delegate):
+        _flat_cells(delegate)
+        super().setItemDelegateForColumn(column, delegate)
+
     def showGrid(self) -> bool:
         return True
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self.viewport())
-        painter.setPen(QPen(QColor(GRID_COLOR), 1))
+        # Exactly one screen pixel wide at every display scaling (125 % would otherwise give 1 or 2 pixels)
+        pen = QPen(QColor(GRID_COLOR), 0)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setRenderHint(QPainter.Antialiasing, False)
         model = self.model()
         rows = model.rowCount() if model else 0
         columns = model.columnCount() if model else 0
@@ -115,6 +129,21 @@ class GridTableView(TableView):
             if 0 <= x <= right:
                 painter.drawLine(x, 0, x, bottom)
         painter.end()
+
+
+def _flat_cells(delegate):
+    """
+    Row backgrounds (hover, selection, colours) fill the whole cell up to the grid lines, instead of the
+    rounded, inset rows of the UI library that looked uneven next to the lines.
+    """
+    if not hasattr(delegate, "_drawBackground"):
+        return
+    delegate.margin = 0
+
+    def draw_background(painter, option, index):
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.drawRect(option.rect)
+    delegate._drawBackground = draw_background
 
 
 def use_classic_scrollbars(view):

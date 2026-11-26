@@ -7,7 +7,8 @@ import pytest
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from receipts import RECEIPT
-from src.utils import archive
+from PySide6.QtCore import Qt
+from src.utils import archive, paths
 from src.utils.datev_generator import DatevGenerator
 from src.utils.pdf_text_guess import guess_amount
 
@@ -156,3 +157,35 @@ def test_cashbook_export_leaves_out_cancelled_entries_and_their_storno(controlle
     assert zipfile.ZipFile(target).namelist() == [f"{kept.receipt_number}_{os.path.basename(kept.attachment_path)}"]
     # Only an entry and its storno: nothing to export
     assert not DatevGenerator(c).generate_cashbook_export([e for e in entries if e.id != kept.id], str(tmp_path / "leer.zip"))
+
+
+def test_cashbook_receipt_column_and_view(controller, seller, monkeypatch, qapp):
+    from src.views import document_viewer
+    from src.views.cashbook_interface import CashbookInterface
+    c = controller
+    c.add_cashbook_entry(datetime(2026, 11, 2), 50.0, "Einlage", "A", "Einnahme", 0, attachment_source=RECEIPT)
+    c.add_cashbook_entry(datetime(2026, 11, 3), 5.0, "Privat", "A", "Barentnahme Privat", 0)
+    c.finalize_cashbook()
+    page = CashbookInterface(c)
+    page.refresh()
+    column = next(i for i, col in enumerate(page.model.columns) if col.title == "Beleg")
+    marks = {page.proxy.index(r, 0).data(Qt.UserRole + 1).description: page.proxy.index(r, column).data()
+             for r in range(page.proxy.rowCount())}
+    assert marks == {"Einlage": "✓", "Privat": "✗"}
+    shown = []
+    monkeypatch.setattr(document_viewer.PdfViewer, "exec", lambda viewer: shown.append(viewer.path))
+    entry = next(e for e in c.get_cashbook_entries() if e.attachment_path)
+    page.on_activated(entry) # double click: the receipt in Schalk, not in a PDF program
+    assert shown == [paths.resolve(entry.attachment_path)]
+
+
+def test_invoice_pdf_opens_without_the_attachment_panel(controller, seller):
+    from pypdf import PdfReader
+    from src.utils.invoice_documents import build_invoice_pdf
+    customer_id = controller.add_customer(company_name="Kunde AG", address="Weg 2", postal_code="20095", city="Hamburg")
+    day = datetime(2026, 11, 2)
+    invoice_id = controller.create_invoice(customer_id, day, day, [
+        {"title": "Leistung", "quantity": 1, "unit_price": 100.0, "tax_percent": 19.0}], status="Offen")
+    reader = PdfReader(build_invoice_pdf(controller, controller.get_invoice(invoice_id)))
+    assert reader.trailer["/Root"]["/PageMode"] == "/UseNone"
+    assert "factur-x.xml" in reader.attachments # the e-invoice data stays embedded
