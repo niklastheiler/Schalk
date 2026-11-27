@@ -14,7 +14,7 @@ from src.utils.einvoice_parser import EInvoiceData, read_einvoice, to_html
 from src.utils.einvoice_validation import check_received
 from src.utils.pdf_text_guess import guess_from_pdf
 from src.utils.signal_bus import SignalBus
-from src.views.common import COLOR_GREY, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
+from src.views.common import COLOR_GREY, archived_path, Column, ListPage, confirm, fmt_date, fmt_money, notify_error, notify_success, open_document
 from src.views.date_picker import GermanDatePicker
 from src.views.invoice_interface import add_action
 
@@ -191,22 +191,12 @@ class IncomingInvoiceInterface(ListPage):
             add_action(menu, FIF.CANCEL, "Stornieren", lambda: self.cancel(invoice.id))
 
     def _archived_path(self, invoice):
-        """Path of the archived document, None (with a message) if it is missing."""
-        path = paths.resolve(invoice.file_path)
-        if path and os.path.isfile(path):
-            return path
-        logger.error("Archivierter Beleg fehlt: %s", invoice.file_path)
-        notify_error(self, "Beleg fehlt im Archiv",
-                     "Die archivierte Datei ist nicht mehr vorhanden. Bitte unter Einstellungen → Sicherheit & GoBD "
-                     "ein Backup einspielen: Fehlende Belege werden daraus wiederhergestellt.")
-        return None
+        return archived_path(self, invoice.file_path)
 
     def open_file(self, stored_path):
-        path = paths.resolve(stored_path)
-        if path and os.path.isfile(path):
+        path = archived_path(self, stored_path)
+        if path:
             open_document(self, path)
-        else:
-            notify_error(self, "Beleg fehlt im Archiv", "Die archivierte Datei ist nicht mehr vorhanden.")
 
     def open_invoice(self, invoice):
         """Double click: the original receipt as it was received (PDF in Schalk, XRechnung as readable view)."""

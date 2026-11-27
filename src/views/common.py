@@ -90,6 +90,7 @@ class GridTableView(TableView):
     def __init__(self, parent=None):
         super().__init__(parent)
         _flat_cells(self.delegate)
+        self._grid_pen = QPen(QColor(GRID_COLOR), 0) # width 0: cosmetic, one screen pixel
         # One even fill: the lines separate the rows, stripes are not needed (colours mark state and selection)
         self.setAlternatingRowColors(False)
 
@@ -104,9 +105,7 @@ class GridTableView(TableView):
         super().paintEvent(event)
         painter = QPainter(self.viewport())
         # Exactly one screen pixel wide at every display scaling (125 % would otherwise give 1 or 2 pixels)
-        pen = QPen(QColor(GRID_COLOR), 0)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
+        painter.setPen(self._grid_pen)
         painter.setRenderHint(QPainter.Antialiasing, False)
         model = self.model()
         rows = model.rowCount() if model else 0
@@ -167,6 +166,22 @@ def make_scrollable(content: QWidget) -> QScrollArea:
     content.setAutoFillBackground(False)
     style_scrollbars(area)
     return area
+
+
+def archived_path(parent, stored_path: str):
+    """
+    Current path of an archived document (receipt, received invoice); None with a message if the file is
+    missing in the archive.
+    """
+    from src.utils import paths
+    path = paths.resolve(stored_path)
+    if path and os.path.isfile(path):
+        return path
+    logger.error("Archivierter Beleg fehlt: %s", stored_path)
+    notify_error(parent, "Beleg fehlt im Archiv",
+                 "Die archivierte Datei ist nicht mehr vorhanden. Bitte unter Einstellungen → Sicherheit & GoBD "
+                 "ein Backup einspielen: Fehlende Belege werden daraus wiederhergestellt.")
+    return None
 
 
 def open_document(parent, path: str, print_document: bool = False) -> bool:
