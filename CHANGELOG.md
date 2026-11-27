@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.9
+
+- Ein fehlender Beleg im Archiv wird überall gleich gemeldet und im Protokoll vermerkt (auch im Kassenbuch)
+
 ## 1.4.8
 
 - Tabellen: Linien gleichmäßig ein Pixel breit, Zellen einheitlich gefüllt
